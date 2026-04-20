@@ -44,3 +44,12 @@ class ScreenGrabber(FrameProvider):
             self._thread.join(timeout=2)
         self._mss.close()
         print("[ScreenGrabber] Zatrzymany")
+
+        def get_latest_frame(self) -> FrameData:
+        """
+        Zwraca ostatnią przechwyconą klatkę lub None jeśli żadna nie dostępna.
+        """
+        with self._lock:
+            if self._latest_frame is None:
+                raise RuntimeError("Brak dostępnych klatek - upewnij się, że start() został wywołany")
+            return self._latest_frame
