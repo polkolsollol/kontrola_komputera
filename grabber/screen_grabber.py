@@ -26,3 +26,21 @@ class ScreenGrabber(FrameProvider):
         self._lock = threading.Lock()
         self._latest_frame = None
         self._mss = mss.mss()
+
+    def start(self):
+        """Uruchamia wątek przechwytywania w tle."""
+        if self._running:
+            return
+
+        self._running = True
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+        print(f"[ScreenGrabber] Gestartet - monitor {self.monitor_index}")
+
+    def stop(self):
+        """Zatrzymuje przechwytywanie i zwalnia zasoby."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2)
+        self._mss.close()
+        print("[ScreenGrabber] Zatrzymany")
