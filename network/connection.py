@@ -104,13 +104,20 @@ class NetworkReceiver:
             except ConnectionRefusedError:
                 time.sleep(self.reconnect_delay)
 
+    
     def receive_frame(self) -> FrameData:
-        header = recv_exact(self.socket, HEADER_SIZE)
-        data_size, msg_type = struct.unpack("!IB", header)
-
-        payload = recv_exact(self.socket, data_size)
+        try:
+            header = recv_exact(self.socket, HEADER_SIZE)
+            data_size, msg_type = struct.unpack("!IB", header)
+            payload = recv_exact(self.socket, data_size)
+        except (ConnectionError, OSError):
+            print("[Receiver] Connection lost, reconnecting...")
+            self.socket.close()
+            self.connect()
+            raise
 
         if msg_type == MSG_TYPE_FRAME:
             return deserialize_frame(payload)
 
         raise ValueError(f"Unknown message type: {msg_type}")
+
