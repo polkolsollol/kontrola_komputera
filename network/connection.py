@@ -3,9 +3,10 @@
 
 import socket
 import struct
+import time
 from typing import Optional
 from core.interfaces import FrameData
-from core.protocol import pack_message, MSG_TYPE_FRAME
+from core.protocol import pack_message, HEADER_SIZE, MSG_TYPE_FRAME
 
 def recv_exact(sock: socket.socket, size: int) -> bytes:
     """Read exactly `size` bytes from TCP socket."""
@@ -83,3 +84,33 @@ class NetworkSender:
             self.client_socket.close()
         if self.server_socket:
             self.server_socket.close()
+
+
+class NetworkReceiver:
+    def __init__(self, host="127.0.0.1", port=9000, reconnect_delay=2):
+        self.host = host
+        self.port = port
+        self.reconnect_delay = reconnect_delay
+        self.socket: Optional[socket.socket] = None
+
+    def connect(self):
+        while True:
+            try:
+                print("[Receiver] Connecting...")
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.connect((self.host, self.port))
+                print("[Receiver] Connected")
+                return
+            except ConnectionRefusedError:
+                time.sleep(self.reconnect_delay)
+
+    def receive_frame(self) -> FrameData:
+        header = recv_exact(self.socket, HEADER_SIZE)
+        data_size, msg_type = struct.unpack("!IB", header)
+
+        payload = recv_exact(self.socket, data_size)
+
+        if msg_type == MSG_TYPE_FRAME:
+            return deserialize_frame(payload)
+
+        raise ValueError(f"Unknown message type: {msg_type}")
