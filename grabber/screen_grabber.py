@@ -4,6 +4,11 @@ import cv2
 import numpy as np
 import mss
 
+# TODO dla osoby od grabbera:
+# - naprawic wciecia metod get_latest_frame, _capture_loop, __enter__ i testu __main__;
+# - importowac FrameProvider/FrameData z core.interfaces zamiast lokalnego duplikatu;
+# - zostawic w FrameData.pixels skompresowany JPEG gotowy do wyslania przez siec.
+
 from frame_provider import FrameProvider, FrameData
 
 
