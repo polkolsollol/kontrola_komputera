@@ -87,3 +87,12 @@ class ScreenGrabber(FrameProvider):
                         self._latest_frame = frame_data
         except Exception as e:
             print(f"[ScreenGrabber] Błąd w pętli przechwytywania: {e}")
+
+        def __enter__(self):
+        """Context manager support."""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager support."""
+        self.stop()
