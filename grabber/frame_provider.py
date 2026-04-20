@@ -8,4 +8,25 @@ class FrameData:
     pixels: bytes
     width: int
     height: int
-    timestamp: floa
+    timestamp: float
+
+
+class FrameProvider(ABC):
+    """Abstrakcyjny interfejs dostawcy klatek."""
+
+    @abstractmethod
+    def start(self):
+        """Uruchamia proces przechwytywania."""
+        pass
+
+    @abstractmethod
+    def stop(self):
+        """Zatrzymuje proces i zwalnia zasoby."""
+        pass
+
+    @abstractmethod
+    def get_latest_frame(self) -> FrameData:
+        """Zwraca ostatnią przechwyconą klatkę w ustandaryzowanym formacie."""
+        pass
+
+
