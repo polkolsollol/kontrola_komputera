@@ -96,3 +96,16 @@ class ScreenGrabber(FrameProvider):
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager support."""
         self.stop()
+        
+# Przykład użycia (do testów):
+    if __name__ == "__main__":
+    grabber = ScreenGrabber(jpeg_quality=75)
+    grabber.start()
+    
+    try:
+        for i in range(5):
+            frame = grabber.get_latest_frame()
+            print(f"Klatka {i}: {frame.width}x{frame.height}, {len(frame.pixels)} bajtów")
+            time.sleep(1)
+    finally:
+        grabber.stop()
