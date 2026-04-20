@@ -1,4 +1,9 @@
 """
+TODO dla osoby od UI:
+- podlaczyc przycisk Polacz do NetworkReceiver/NetworkFrameProvider;
+- dekodowac JPEG przez QImage.loadFromData(frame.pixels), bo grabber ma wysylac JPEG;
+- importowac kontrakt z core.interfaces po uporzadkowaniu pakietow.
+
 ui.py – Warstwa interfejsu użytkownika (PySide6) dla aplikacji zdalnego podglądu ekranu.
 
 Architektura

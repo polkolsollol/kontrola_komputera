@@ -1,5 +1,11 @@
 
 # network/connection.py
+#
+# TODO dla osoby od server/network:
+# - ustalic nazwy rol: ta klasa obecnie nasluchuje jak serwer TCP,
+#   mimo nazwy NetworkSender;
+# - dodac timeouty, kontrolowane zamykanie socketow i komunikaty bledow dla UI;
+# - przygotowac provider albo worker, ktory przekaze odebrane FrameData do UI.
 
 import socket
 import struct
