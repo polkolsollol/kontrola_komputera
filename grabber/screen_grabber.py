@@ -54,7 +54,14 @@ class ScreenGrabber(FrameProvider):
         self._mss = mss.mss()
 
     def start(self):
-        """Uruchamia wątek przechwytywania w tle."""
+         """
+        Uruchamia wątek przechwytywania w tle.
+
+        Jeśli grabber już działa (self._running == True), metoda kończy się
+        bez efektu — nie można uruchomić dwóch wątków jednocześnie.
+        Wątek jest ustawiony jako daemon, więc zakończy się automatycznie
+        gdy główny wątek programu się zamknie.
+        """
         if self._running:
             return
 
@@ -64,7 +71,16 @@ class ScreenGrabber(FrameProvider):
         print(f"[ScreenGrabber] Gestartet - monitor {self.monitor_index}")
 
     def stop(self):
-        """Zatrzymuje przechwytywanie i zwalnia zasoby."""
+        """
+        Zatrzymuje przechwytywanie i zwalnia wszystkie zasoby.
+
+        Ustawia flagę _running na False, co powoduje wyjście z pętli
+        w _capture_loop(). Następnie czeka maksymalnie 2 sekundy na
+        zakończenie wątku (join z timeout), po czym zamyka instancję mss.
+
+        Metoda jest bezpieczna do wywołania nawet jeśli grabber nie był
+        wcześniej uruchomiony.
+        """
         self._running = False
         if self._thread:
             self._thread.join(timeout=2)
@@ -72,8 +88,15 @@ class ScreenGrabber(FrameProvider):
         print("[ScreenGrabber] Zatrzymany")
 
     def get_latest_frame(self) -> FrameData:
-        """
-        Zwraca ostatnią przechwyconą klatkę lub None jeśli żadna nie dostępna.
+         """
+        Zatrzymuje przechwytywanie i zwalnia wszystkie zasoby.
+
+        Ustawia flagę _running na False, co powoduje wyjście z pętli
+        w _capture_loop(). Następnie czeka maksymalnie 2 sekundy na
+        zakończenie wątku (join z timeout), po czym zamyka instancję mss.
+
+        Metoda jest bezpieczna do wywołania nawet jeśli grabber nie był
+        wcześniej uruchomiony.
         """
         with self._lock:
             if self._latest_frame is None:
@@ -81,7 +104,19 @@ class ScreenGrabber(FrameProvider):
             return self._latest_frame
 
     def _capture_loop(self):
-        """Pętla przechwytywania działająca w wątku."""
+        """
+        Główna pętla przechwytywania działająca w wątku tła.
+
+        Wykonuje w kółko następujące kroki:
+            1. Przechwycenie surowego zrzutu ekranu przez mss (format BGRA).
+            2. Konwersja numpy array z BGRA na BGR (format natywny OpenCV).
+            3. Kompresja klatki do JPEG z zadaną jakością.
+            4. Zapisanie wyniku jako FrameData pod _latest_frame (z lockiem).
+
+        Pętla kończy się gdy _running zostanie ustawione na False (przez stop()).
+        Wszelkie wyjątki są łapane i logowane — pętla NIE rzuca wyjątków
+        do wątku wywołującego, aby nie crashować całej aplikacji.
+        """
         try:
             while self._running:
                 # Przechwytanie surowego ekranu
@@ -116,12 +151,29 @@ class ScreenGrabber(FrameProvider):
             print(f"[ScreenGrabber] Błąd w pętli przechwytywania: {e}")
 
     def __enter__(self):
-        """Context manager support."""
+        """
+        Obsługa wejścia do bloku with — automatycznie uruchamia grabber.
+
+        Dzięki temu można pisać:
+            with ScreenGrabber() as grabber:
+                ...
+        zamiast ręcznie wywoływać start() i stop().
+        """
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager support."""
+        """
+        Obsługa wyjścia z bloku with — automatycznie zatrzymuje grabber.
+
+        Wywoływane zarówno przy normalnym wyjściu, jak i przy wyjątku.
+        Zwraca None (falsy), więc wyjątki są propagowane dalej — nie są tłumione.
+
+        Args:
+            exc_type: Typ wyjątku (None jeśli brak)
+            exc_val:  Wartość wyjątku (None jeśli brak)
+            exc_tb:   Traceback wyjątku (None jeśli brak)
+        """
         self.stop()
 
 
