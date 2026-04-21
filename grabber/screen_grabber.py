@@ -5,11 +5,11 @@ import numpy as np
 import mss
 
 # TODO dla osoby od grabbera:
-# - naprawic wciecia metod get_latest_frame, _capture_loop, __enter__ i testu __main__;
-# - importowac FrameProvider/FrameData z core.interfaces zamiast lokalnego duplikatu;
-# - zostawic w FrameData.pixels skompresowany JPEG gotowy do wyslania przez siec.
+# - [DONE] naprawic wciecia metod get_latest_frame, _capture_loop, __enter__ i testu __main__;
+# - [DONE] importowac FrameProvider/FrameData z core.interfaces zamiast lokalnego duplikatu;
+# - [DONE] zostawic w FrameData.pixels skompresowany JPEG gotowy do wyslania przez siec.
 
-from frame_provider import FrameProvider, FrameData
+from core.interfaces import FrameProvider, FrameData
 
 
 class ScreenGrabber(FrameProvider):
@@ -50,7 +50,7 @@ class ScreenGrabber(FrameProvider):
         self._mss.close()
         print("[ScreenGrabber] Zatrzymany")
 
-        def get_latest_frame(self) -> FrameData:
+    def get_latest_frame(self) -> FrameData:
         """
         Zwraca ostatnią przechwyconą klatkę lub None jeśli żadna nie dostępna.
         """
@@ -58,42 +58,43 @@ class ScreenGrabber(FrameProvider):
             if self._latest_frame is None:
                 raise RuntimeError("Brak dostępnych klatek - upewnij się, że start() został wywołany")
             return self._latest_frame
-    
-     def _capture_loop(self):
+
+    def _capture_loop(self):
         """Pętla przechwytywania działająca w wątku."""
         try:
             while self._running:
                 # Przechwytanie surowego ekranu
                 screenshot = self._mss.grab(self._mss.monitors[self.monitor_index])
-                
+
                 # Konwersja do numpy array
                 frame_bgra = np.array(screenshot)
-                
+
                 # Konwersja BGRA → BGR (OpenCV format)
                 frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
-                
+
                 # Kompresja do JPEG
                 ret, jpeg_bytes = cv2.imencode(
                     '.jpg',
                     frame_bgr,
                     [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
                 )
-                
+
                 if ret:
-                    # Zapamiętanie klatki z timestampeg
+                    # Zapamiętanie klatki z timestampem
+                    # pixels zawiera skompresowany JPEG gotowy do wysłania przez sieć
                     frame_data = FrameData(
                         pixels=jpeg_bytes.tobytes(),
                         width=frame_bgra.shape[1],
                         height=frame_bgra.shape[0],
                         timestamp=time.time()
                     )
-                    
+
                     with self._lock:
                         self._latest_frame = frame_data
         except Exception as e:
             print(f"[ScreenGrabber] Błąd w pętli przechwytywania: {e}")
 
-        def __enter__(self):
+    def __enter__(self):
         """Context manager support."""
         self.start()
         return self
@@ -101,12 +102,13 @@ class ScreenGrabber(FrameProvider):
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager support."""
         self.stop()
-        
+
+
 # Przykład użycia (do testów):
-    if __name__ == "__main__":
+if __name__ == "__main__":
     grabber = ScreenGrabber(jpeg_quality=75)
     grabber.start()
-    
+
     try:
         for i in range(5):
             frame = grabber.get_latest_frame()
