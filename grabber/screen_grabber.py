@@ -14,15 +14,36 @@ from core.interfaces import FrameProvider, FrameData
 
 class ScreenGrabber(FrameProvider):
     """
-    Klasa przechwytująca ekran za pomocą mss i kompresująca JPEG za pomocą OpenCV.
-    Działa w wątku w tle, zapewniając ciągły strumień klatek.
+    Klasa przechwytująca zawartość ekranu za pomocą biblioteki mss,
+    a następnie kompresująca każdą klatkę do formatu JPEG przy użyciu OpenCV.
+
+    Przechwytywanie odbywa się w osobnym wątku demona działającym w tle,
+    dzięki czemu główny wątek aplikacji nie jest blokowany. Najnowsza
+    klatka jest przechowywana w pamięci i może być pobrana w dowolnym
+    momencie przez get_latest_frame().
+
+    Klasa implementuje interfejs FrameProvider oraz protokół context managera
+    (with), co pozwala na wygodne zarządzanie cyklem życia obiektu.
+
+    Przykład użycia:
+        with ScreenGrabber(monitor_index=1, jpeg_quality=80) as grabber:
+            frame = grabber.get_latest_frame()
     """
 
     def __init__(self, monitor_index: int = 1, jpeg_quality: int = 75):
-        """
+         """
+        Inicjalizuje grabber ekranu i tworzy instancję mss do przechwytywania.
+
+        Wątek przechwytywania NIE jest tu uruchamiany — należy wywołać
+        start() lub użyć obiektu jako context managera (with).
+
         Args:
-            monitor_index: Indeks monitora do przechwytywania (1 = główny)
-            jpeg_quality: Jakość kompresji JPEG (0-100, domyślnie 75)
+            monitor_index: Indeks monitora do przechwytywania zgodny z
+                           numeracją mss (1 = główny monitor, 2 = drugi itd.).
+                           Monitor 0 w mss oznacza wirtualny ekran zbiorczy.
+            jpeg_quality:  Jakość kompresji JPEG w skali 0–100.
+                           Wyższe wartości = lepsza jakość, większy rozmiar.
+                           Domyślnie 75 — dobry kompromis dla transmisji sieciowej.
         """
         self.monitor_index = monitor_index
         self.jpeg_quality = jpeg_quality
