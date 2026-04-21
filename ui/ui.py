@@ -247,6 +247,7 @@ class MainWindow(QMainWindow):
         self._ip_input = QLineEdit()
         self._ip_input.setPlaceholderText("np. 192.168.1.100")
         self._ip_input.setFixedWidth(260)
+        self._ip_input.returnPressed.connect(self._toggle_connection)
         self._ip_input.setStyleSheet(
             "QLineEdit { background: #313244; color: #cdd6f4; border: 1px solid #585b70;"
             " border-radius: 4px; padding: 4px 8px; }"
@@ -336,6 +337,7 @@ class MainWindow(QMainWindow):
 
         self._worker_thread.started.connect(self._worker.start_loop)
         self._worker.frame_ready.connect(self._video_widget.update_frame, Qt.ConnectionType.QueuedConnection)
+        self._worker.frame_ready.connect(self._on_first_frame, Qt.ConnectionType.QueuedConnection)
         self._worker.fps_updated.connect(self._on_fps_updated, Qt.ConnectionType.QueuedConnection)
 
         self._worker_thread.start()
@@ -364,6 +366,17 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._stop_stream()
         super().closeEvent(event)
+
+    @Slot(QImage)
+    def _on_first_frame(self, _image: QImage) -> None:
+        """Zmienia status na „Połączono” po pierwszej klatce."""
+        ip = self._ip_input.text().strip()
+        self._status_label.setText(f"Stan: Połączono ({ip})")
+        if self._worker is not None:
+            try:
+                self._worker.frame_ready.disconnect(self._on_first_frame)
+            except RuntimeError:
+                pass
 
 
 def main() -> None:
