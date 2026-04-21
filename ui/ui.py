@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
 from typing import Optional
 
+from dotenv import load_dotenv
 from PySide6.QtCore import QObject, QPoint, QRect, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -24,6 +26,10 @@ from PySide6.QtWidgets import (
 from core.interfaces import FrameData, FrameProvider
 from network.connection import NetworkReceiver
 
+
+# ---------------------------------------------------------------------------
+# Warstwa sieciowa – odbieranie klatek w wątku tła
+# ---------------------------------------------------------------------------
 
 class NetworkFrameProvider(FrameProvider):
     """Receive frames in the background and expose the newest one."""
@@ -85,6 +91,10 @@ class NetworkFrameProvider(FrameProvider):
                 self._last_error = str(exc)
                 time.sleep(self.reconnect_delay)
 
+
+# ---------------------------------------------------------------------------
+# Worker Qt – konwersja klatek i licznik FPS
+# ---------------------------------------------------------------------------
 
 class FrameWorker(QObject):
     frame_ready = Signal(QImage)
@@ -155,6 +165,10 @@ class FrameWorker(QObject):
         return QImage()
 
 
+# ---------------------------------------------------------------------------
+# Widget wyświetlający wideo
+# ---------------------------------------------------------------------------
+
 class VideoWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -196,6 +210,150 @@ class VideoWidget(QWidget):
 
         painter.end()
 
+
+# ---------------------------------------------------------------------------
+# Okno logowania administratora
+# ---------------------------------------------------------------------------
+
+class LoginWindow(QWidget):
+    """
+    Ekran logowania wyświetlany przy starcie aplikacji odbiornika.
+
+    Dane logowania (login i hasło) są wczytywane z pliku .env za pomocą
+    biblioteki python-dotenv. Klucze w pliku to ADMIN_USERNAME i ADMIN_PASSWORD.
+
+    Po poprawnym zalogowaniu emitowany jest sygnał ``login_successful``,
+    który uruchamia właściwe okno główne aplikacji. Przy błędnych danych
+    wyświetlany jest komunikat, a pole hasła jest czyszczone.
+    """
+
+    login_successful = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Logowanie – Panel Administratora")
+        self.setFixedSize(420, 340)
+        self._load_credentials()
+        self._build_ui()
+        self._apply_styles()
+
+    # ------------------------------------------------------------------
+    # Inicjalizacja
+    # ------------------------------------------------------------------
+
+    def _load_credentials(self) -> None:
+        """Wczytuje dane admina z pliku .env (szukany w katalogu roboczym)."""
+        load_dotenv()
+        self._admin_user = os.getenv("ADMIN_USERNAME", "admin")
+        self._admin_pass = os.getenv("ADMIN_PASSWORD", "admin")
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(48, 40, 48, 40)
+        layout.setSpacing(14)
+
+        # Tytuł
+        title = QLabel("Panel Administratora")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setObjectName("loginTitle")
+
+        # Pole loginu
+        self._user_input = QLineEdit()
+        self._user_input.setPlaceholderText("Login")
+        self._user_input.setFixedHeight(40)
+
+        # Pole hasła
+        self._pass_input = QLineEdit()
+        self._pass_input.setPlaceholderText("Hasło")
+        self._pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pass_input.setFixedHeight(40)
+        self._pass_input.returnPressed.connect(self._attempt_login)
+
+        # Komunikat błędu (domyślnie ukryty)
+        self._error_label = QLabel("")
+        self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._error_label.setObjectName("errorLabel")
+        self._error_label.setFixedHeight(20)
+
+        # Przycisk logowania
+        self._btn_login = QPushButton("Zaloguj się")
+        self._btn_login.setFixedHeight(42)
+        self._btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_login.clicked.connect(self._attempt_login)
+
+        layout.addWidget(title)
+        layout.addSpacing(6)
+        layout.addWidget(self._user_input)
+        layout.addWidget(self._pass_input)
+        layout.addWidget(self._error_label)
+        layout.addWidget(self._btn_login)
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QWidget {
+                background-color: #1e1e2e;
+            }
+            #loginTitle {
+                font-size: 20px;
+                font-weight: bold;
+                color: #89b4fa;
+                margin-bottom: 4px;
+            }
+            QLineEdit {
+                background: #313244;
+                color: #cdd6f4;
+                border: 1px solid #585b70;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #89b4fa;
+            }
+            #errorLabel {
+                color: #f38ba8;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #89b4fa;
+                color: #1e1e2e;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+            }
+            QPushButton:hover  { background-color: #74c7ec; }
+            QPushButton:pressed { background-color: #89dceb; }
+            """
+        )
+
+    # ------------------------------------------------------------------
+    # Logika logowania
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def _attempt_login(self) -> None:
+        """
+        Sprawdza podane dane względem wartości z .env.
+        Sukces  → emituje login_successful i zamyka okno logowania.
+        Błąd    → pokazuje komunikat, czyści pole hasła.
+        """
+        username = self._user_input.text().strip()
+        password = self._pass_input.text()
+
+        if username == self._admin_user and password == self._admin_pass:
+            self.login_successful.emit()
+            self.close()
+        else:
+            self._error_label.setText("Nieprawidłowy login lub hasło. Spróbuj ponownie.")
+            self._pass_input.clear()
+            self._pass_input.setFocus()
+
+
+# ---------------------------------------------------------------------------
+# Główne okno aplikacji
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -390,18 +548,29 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+# ---------------------------------------------------------------------------
+# Punkt wejścia
+# ---------------------------------------------------------------------------
+
 def run_receiver_ui(
     initial_host: str = "",
     initial_port: int = 9000,
     auto_connect: bool = False,
 ) -> int:
     app = QApplication(sys.argv)
-    window = MainWindow(
+
+    # Tworzymy okno główne z góry, ale jeszcze go nie pokazujemy
+    main_window = MainWindow(
         initial_host=initial_host,
         initial_port=initial_port,
         auto_connect=auto_connect,
     )
-    window.show()
+
+    # Pokazujemy ekran logowania – MainWindow otworzy się dopiero po sukcesie
+    login_window = LoginWindow()
+    login_window.login_successful.connect(main_window.show)
+    login_window.show()
+
     return app.exec()
 
 
