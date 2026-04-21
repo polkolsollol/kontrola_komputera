@@ -1,33 +1,55 @@
-﻿# kontrola_komputera
+# kontrola_komputera
 
-Aplikacja ma przesylac obraz ekranu z jednego komputera na drugi komputer w sieci lokalnej. Projekt jest podzielony na trzy obszary pracy:
+Aplikacja przesyla obraz ekranu z jednego komputera na drugi w sieci lokalnej.
 
-- `ui` - okno aplikacji i wyswietlanie odebranych klatek.
-- `grabber` - przechwytywanie ekranu i kompresja obrazu.
-- `server` / `network` - komunikacja TCP, protokol i odbior/wysylka danych.
+Projekt dziala w modelu:
 
-Ten branch jest etapem integracji. Celem lidera jest polaczenie kodu zespolu i wskazanie brakow, a nie przepisywanie modulow za ich autorow.
+- `sender.py` - uruchamiany na komputerze, z ktorego ma byc wysylany ekran,
+- `receiver.py` - uruchamiany na komputerze, ktory ma ten ekran odebrac i pokazac w oknie.
 
-## Aktualny stan
+Po stronie nadawcy obraz ekranu jest przechwytywany, kompresowany do JPEG i wysylany przez TCP. Po stronie odbiorcy klatki sa odbierane i wyswietlane w interfejsie PySide6.
 
-Repo zawiera szkic interfejsu `FrameProvider`, prosty protokol ramek TCP, symulowane UI oraz niedokonczony grabber ekranu. Aplikacja nie jest jeszcze pelnym systemem LAN, bo moduly nie sa spojne i nie sa podlaczone w jeden przeplyw.
+## Architektura
 
-Docelowy przeplyw:
+Przeplyw danych:
 
 ```text
-Komputer A:
-ScreenGrabber -> JPEG FrameData -> NetworkSender
+Komputer nadawcy
+ScreenGrabber -> FrameData(JPEG) -> NetworkServer
 
-Siec LAN:
-TCP socket + naglowek protokolu
+Siec lokalna
+TCP + prosty naglowek [payload_size][message_type]
 
-Komputer B:
-NetworkReceiver -> JPEG FrameData -> UI -> QImage.loadFromData()
+Komputer odbiorcy
+NetworkReceiver -> NetworkFrameProvider -> FrameWorker -> UI
 ```
+
+Najwazniejsze pliki:
+
+- [sender.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/sender.py) - skrypt startowy nadajnika
+- [receiver.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/receiver.py) - skrypt startowy odbiornika z UI
+- [main.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/main.py) - opcjonalny launcher wygodny do lokalnych testow
+- [grabber/screen_grabber.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/grabber/screen_grabber.py) - przechwytywanie ekranu
+- [network/connection.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/network/connection.py) - transport TCP i serializacja klatek
+- [ui/ui.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/ui/ui.py) - interfejs odbiornika
+- [core/interfaces.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/core/interfaces.py) - wspolny kontrakt `FrameData` / `FrameProvider`
+
+## Wymagania
+
+- Windows
+- Python 3.12+ albo zgodny interpreter z Twojego `venv`
+- Dwa komputery w tej samej sieci lokalnej
+
+Zaleznosci projektu sa w [requirements.txt](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/requirements.txt):
+
+- `PySide6`
+- `mss`
+- `numpy`
+- `opencv-python`
 
 ## Instalacja
 
-W katalogu projektu:
+W katalogu projektu uruchom:
 
 ```powershell
 python -m venv venv
@@ -35,127 +57,202 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-Jesli PowerShell blokuje aktywacje venv, uruchom:
+Jesli PowerShell blokuje aktywacje srodowiska:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-## Uruchomienie
+## Jak uruchomic program
 
-Domyslnie uruchamia sie UI z lokalna symulacja klatek:
+### 1. Komputer nadawcy
 
-```powershell
-python main.py
-```
-
-To samo jawnie:
+Na komputerze, z ktorego chcesz wysylac ekran:
 
 ```powershell
-python main.py --mode ui
+python sender.py
 ```
 
-Tryb nadawcy, czyli komputer przechwytujacy ekran:
+Domyslnie skrypt:
+
+- nasluchuje na `0.0.0.0:9000`,
+- przechwytuje monitor `1`,
+- wysyla okolo `15 FPS`,
+- kompresuje obraz z jakoscia `75`.
+
+Przyklad z wlasnymi ustawieniami:
 
 ```powershell
-python main.py --mode sender --host 0.0.0.0 --port 9000 --fps 15 --monitor 1 --quality 75
+python sender.py --host 0.0.0.0 --port 9000 --monitor 1 --fps 20 --quality 80
 ```
 
-Tryb testowego odbiorcy bez UI:
+Po uruchomieniu sender wypisze komunikat, ze czeka na polaczenie odbiornika.
+
+### 2. Komputer odbiorcy
+
+Na komputerze, na ktorym chcesz ogladac ekran:
 
 ```powershell
-python main.py --mode receiver --host 192.168.1.100 --port 9000
+python receiver.py
 ```
 
-Uwaga: tryby `sender` i `receiver` sa przygotowane jako punkty integracji. `sender` zacznie dzialac dopiero po naprawieniu modulu `grabber`.
+Po otwarciu okna:
 
-## Zasady integracji
+1. Wpisz adres IP komputera nadawcy.
+2. Jesli sender korzysta z portu innego niz `9000`, wpisz adres w formacie `IP:PORT`.
+3. Kliknij `Polacz`.
 
-- Wspolnym kontraktem danych jest `core.interfaces.FrameData`.
-- Wspolnym kontraktem zrodla klatek jest `core.interfaces.FrameProvider`.
-- Kazdy modul powinien importowac `FrameData` i `FrameProvider` z `core.interfaces`.
-- Obraz przesylany przez siec powinien byc JPEG-em w `FrameData.pixels`.
-- UI po stronie odbiorcy powinno dekodowac JPEG przez `QImage.loadFromData(frame.pixels)`.
-- Logika UI, grabbera i sieci nie powinna byc mieszana w `main.py`.
+Przyklad adresu:
 
-## Lista zadan dla zespolu
+```text
+192.168.1.100
+```
 
-### UI
+albo:
 
-Do poprawy:
+```text
+192.168.1.100:9000
+```
 
-- `ui/ui.py` importuje `FrameData` i `FrameProvider` przez `from interfaces import ...`. Nalezy przejsc na `from core.interfaces import FrameData, FrameProvider`.
-- `FrameWorker._frame_data_to_qimage()` zaklada surowe RGBA, a grabber i siec maja przesylac JPEG. Trzeba dodac obsluge JPEG przez `QImage.loadFromData()`.
-- Przycisk `Polacz` uruchamia obecnie symulacje, nie realne polaczenie sieciowe.
-- Pole IP jest tylko elementem UI. Musi zostac wykorzystane do konfiguracji `NetworkReceiver`.
-- Trzeba zadbac o komunikaty bledow: brak polaczenia, zly adres IP, utracone polaczenie, timeout.
+Mozesz tez uruchomic odbiornik z gotowym adresem:
 
-Do dodania:
+```powershell
+python receiver.py --host 192.168.1.100 --port 9000
+```
 
-- `NetworkFrameProvider` albo osobny `QThread`, ktory odbiera klatki przez `NetworkReceiver` i emituje je do UI.
-- Tryb wyboru zrodla: symulacja lokalna albo prawdziwy odbior z sieci.
-- Bezpieczne zatrzymywanie watku sieciowego po kliknieciu `Rozlacz`.
-- Aktualizacja status bara o stan polaczenia i liczbe FPS z realnego strumienia.
+Albo od razu sprobowac polaczenia przy starcie:
 
-Wskazowka:
+```powershell
+python receiver.py --host 192.168.1.100 --port 9000 --connect
+```
 
-UI nie powinno znac szczegolow socketow. Najlepiej, zeby dostawalo gotowe `FrameData` albo gotowe `QImage` z warstwy sieciowej.
+## Jak poruszac sie w aplikacji odbiornika
 
-### Grabber
+Interfejs jest prosty i ma jeden glowny ekran:
 
-Do poprawy:
+- u gory znajduje sie pole `Adres nadawcy`,
+- obok jest przycisk `Polacz` albo `Rozlacz`,
+- srodek okna pokazuje aktualny obraz z komputera nadawcy,
+- na dole pasek statusu pokazuje stan polaczenia i FPS.
 
-- `grabber/screen_grabber.py` ma bledne wciecia przy `get_latest_frame`, `_capture_loop`, `__enter__` i bloku `if __name__ == "__main__"`.
-- Import `from frame_provider import ...` trzeba zastapic importem z `core.interfaces`.
-- W repo sa dwa duplikaty `FrameData`/`FrameProvider`: w `core/interfaces.py` i `grabber/frame_provider.py`. Modul grabbera powinien korzystac z wersji z `core`.
-- `get_latest_frame()` powinien byc metoda klasy `ScreenGrabber`, a nie funkcja zagniezdzona w `stop()`.
-- Po zatrzymaniu i ponownym starcie trzeba bezpiecznie tworzyc/zamykac obiekt `mss.mss()`.
+Znaczenie elementow:
 
-Do dodania:
+- `Adres nadawcy` - IP komputera, na ktorym dziala `sender.py`
+- `Polacz` - nawiazuje polaczenie i zaczyna odbior klatek
+- `Rozlacz` - zatrzymuje odbior i rozlacza sesje
+- `Stan: Laczenie...` - aplikacja probuje polaczyc sie z nadajnikiem
+- `Stan: Polaczono (...)` - odebrano pierwsze poprawne klatki
+- `FPS` - liczba nowych klatek na sekunde wyswietlanych w UI
 
-- Limit FPS albo opoznienie w petli przechwytywania, zeby nie wysylac maksymalnej liczby klatek bez kontroli.
-- Walidacja `monitor_index` i czytelny blad, jesli monitor nie istnieje.
-- Test lokalny: przechwyc jedna klatke, zapisz JPEG do pliku testowego i sprawdz, czy da sie go otworzyc.
-- Mozliwosc ustawienia jakosci JPEG.
+## Parametry skryptow
 
-Wskazowka:
+### sender.py
 
-`FrameData.pixels` powinno zawierac juz skompresowany JPEG. Wtedy siec przesyla mniej danych, a UI dekoduje obraz po stronie odbiorcy.
+```powershell
+python sender.py --help
+```
 
-### Server / Network
+Dostepne opcje:
 
-Do poprawy:
+- `--host` - adres nasluchu, domyslnie `0.0.0.0`
+- `--port` - port TCP, domyslnie `9000`
+- `--monitor` - indeks monitora dla biblioteki `mss`
+- `--fps` - limit FPS przechwytywania
+- `--quality` - jakosc JPEG od `1` do `100`
 
-- Nazwy klas sa mylace. `NetworkSender` obecnie robi `bind/listen/accept`, czyli zachowuje sie jak serwer TCP. Trzeba zdecydowac, ktory komputer jest serwerem w architekturze.
-- `NetworkReceiver.connect()` obsluguje tylko `ConnectionRefusedError`. Trzeba obsluzyc tez timeout, zly host, zerwane polaczenie i zamykanie aplikacji.
-- `receive_frame()` po utracie polaczenia robi reconnect i rzuca wyjatek. UI musi wiedziec, czy ma kontynuowac, czy pokazac blad.
-- Format `struct.pack("!II d", ...)` zawiera spacje w formacie. Lepiej ujednolicic do `!IId` dla czytelnosci.
+### receiver.py
 
-Do dodania:
+```powershell
+python receiver.py --help
+```
 
-- Jasny podzial na role, np. `FrameServer` i `FrameClient`, albo dokumentacja obecnych nazw.
-- Petla wysylania klatek: pobierz `FrameData` z grabbera i wyslij przez TCP.
-- Petla odbioru klatek: odbierz `FrameData` i przekaz do UI.
-- Timeouty socketow, zamykanie socketow i logowanie stanu polaczenia.
-- Opcjonalnie handshake na starcie: wersja protokolu, szerokosc, wysokosc, format `jpeg`.
+Dostepne opcje:
 
-Wskazowka:
+- `--host` - opcjonalny adres nadawcy wpisany od razu do UI
+- `--port` - domyslny port TCP
+- `--connect` - automatyczne polaczenie po uruchomieniu, jesli podano `--host`
 
-Na potrzeby pierwszej wersji wystarczy TCP i jedna osoba podlaczona do jednego nadawcy. Multiklientowosc, szyfrowanie i sterowanie myszka/klawiatura mozna zostawic na pozniej.
+## Dodatkowy launcher
 
-## Definicja gotowosci pierwszej wersji
+Mozesz tez uruchamiac projekt przez [main.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/main.py):
 
-Pierwsza wersja projektu jest gotowa, gdy:
+```powershell
+python main.py sender --port 9000
+python main.py receiver --host 192.168.1.100 --connect
+```
 
-- Na komputerze A mozna uruchomic `python main.py --mode sender`.
-- Na komputerze B mozna uruchomic UI i wpisac IP komputera A.
-- Po kliknieciu `Polacz` widac realny ekran komputera A.
-- Po odlaczeniu jednej strony aplikacja nie zawiesza sie.
-- README zawiera aktualna instrukcje uruchomienia.
+Ten plik jest tylko wygodnym wrapperem. Docelowo najczytelniej uzywac osobno `sender.py` i `receiver.py`.
 
-## Najczestsze problemy w LAN
+## Typowy scenariusz krok po kroku
 
-- Zapora Windows moze blokowac port `9000`.
-- Komputery musza byc w tej samej sieci.
-- Do polaczenia uzywaj adresu IPv4 komputera nadajacego, np. `192.168.1.100`.
-- Jesli port jest zajety, uruchom aplikacje na innym porcie, np. `--port 9010`.
+1. Na komputerze A uruchom `python sender.py`.
+2. Sprawdz jego lokalny adres IPv4, np. `192.168.1.100`.
+3. Na komputerze B uruchom `python receiver.py`.
+4. W polu `Adres nadawcy` wpisz `192.168.1.100`.
+5. Kliknij `Polacz`.
+6. Po chwili w oknie odbiornika powinien pojawic sie obraz z komputera A.
+
+## Rozwiazywanie problemow
+
+### Nie moge sie polaczyc
+
+Sprawdz:
+
+- czy oba komputery sa w tej samej sieci LAN,
+- czy sender jest uruchomiony przed proba laczenia,
+- czy wpisany adres IP jest poprawny,
+- czy port po obu stronach jest taki sam,
+- czy zapora systemowa Windows nie blokuje portu `9000`.
+
+### Widze okno, ale brak obrazu
+
+Sprawdz:
+
+- czy sender rzeczywiscie przechwytuje poprawny monitor,
+- czy monitor wskazany przez `--monitor` istnieje,
+- czy `opencv-python`, `mss` i `numpy` sa zainstalowane,
+- czy po stronie odbiorcy licznik `FPS` rosnie.
+
+### Program dziala wolno
+
+Mozesz zmniejszyc:
+
+- `--fps`, zeby wysylac mniej klatek,
+- `--quality`, zeby zmniejszyc rozmiar JPEG.
+
+Przykladowo:
+
+```powershell
+python sender.py --fps 10 --quality 60
+```
+
+### Port 9000 jest zajety
+
+Uruchom obie strony na innym porcie, na przyklad `9010`:
+
+```powershell
+python sender.py --port 9010
+python receiver.py --host 192.168.1.100 --port 9010 --connect
+```
+
+## Test techniczny
+
+W repo znajduje sie prosty test transportu:
+
+```powershell
+python test_network.py
+```
+
+Test uruchamia lokalny serwer i klient TCP oraz przesyla przykladowa klatke `FrameData`.
+
+## Status projektu
+
+Aktualna wersja spina wszystkie glowne obszary:
+
+- przechwytywanie ekranu,
+- kompresje JPEG,
+- przesyl przez TCP,
+- odbior i wyswietlanie w UI,
+- dwa osobne skrypty startowe dla nadajnika i odbiornika.
+
+To jest sensowna pierwsza wersja dzialajaca w LAN. Kolejne rozszerzenia mozna robic juz na spokojnie: autowybor monitorow, lepsze komunikaty o bledach, handshake protokolu, sterowanie zdalne, szyfrowanie albo obsluge wielu odbiornikow.

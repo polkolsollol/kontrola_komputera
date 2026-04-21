@@ -1,26 +1,30 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-@dataclass
+
+@dataclass(slots=True)
 class FrameData:
-    """Obiekt transferowy, który będzie krążył wewnątrz aplikacji."""
+    """Single video frame transferred between application layers."""
+
     pixels: bytes
     width: int
     height: int
     timestamp: float
 
+
 class FrameProvider(ABC):
-    @abstractmethod
-    def start(self):
-        """Uruchamia proces przechwytywania."""
-        pass
+    """Abstract source of frames used by grabber and receiver code."""
 
     @abstractmethod
-    def stop(self):
-        """Zatrzymuje proces i zwalnia zasoby."""
-        pass
+    def start(self) -> None:
+        """Start producing or receiving frames."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Stop work and release resources."""
 
     @abstractmethod
     def get_latest_frame(self) -> FrameData:
-        """Zwraca ostatnią przechwyconą klatkę w ustandaryzowanym formacie."""
-        pass
+        """Return the most recent frame."""
