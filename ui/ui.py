@@ -1,145 +1,166 @@
-"""
-ui/ui.py – Warstwa interfejsu użytkownika (PySide6) dla aplikacji zdalnego podglądu ekranu.
-
-Architektura
-────────────
-MainWindow – Główne okno aplikacji.
-NetworkFrameProvider – adapter do NetworkReceiver (odbiera JPEG w tle).
-FrameWorker – wątek Qt pobierający klatki i dekodujący JPEG przez QImage.loadFromData().
-"""
-
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from typing import Optional
 
-from PySide6.QtCore import (
-    QObject,
-    QThread,
-    QTimer,
-    Signal,
-    Slot,
-    Qt,
-    QRect,
-    QPoint,
-)
-from PySide6.QtGui import (
-    QImage,
-    QPixmap,
-    QPainter,
-    QColor,
-    QFont,
-    QPen,
-    QBrush,
-    QLinearGradient,
-)
+from PySide6.QtCore import QObject, QPoint, QRect, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QMainWindow,
-    QWidget,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMainWindow,
     QPushButton,
-    QHBoxLayout,
-    QVBoxLayout,
-    QStatusBar,
     QSizePolicy,
-    QFrame,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
 )
-
-import sys
 
 from core.interfaces import FrameData, FrameProvider
 from network.connection import NetworkReceiver
 
-_JPEG_SOI = b"\xff\xd8"
 
-
-# ═══════════════════════════════════════════════
-# 1. NetworkFrameProvider
-# ═══════════════════════════════════════════════
 class NetworkFrameProvider(FrameProvider):
-    def __init__(self, host: str, port: int = 9000) -> None:
-        self._receiver = NetworkReceiver(host=host, port=port)
+    """
+    Implementacja FrameProvider, która odbiera klatki w tle z sieci.
+
+    - Używa osobnego wątku (threading.Thread) do odbioru danych
+    - Przechowuje tylko najnowszą klatkę (nadpisywanie)
+    - Obsługuje automatyczne ponowne łączenie
+    """
+
+    def __init__(self, host: str, port: int = 9000, reconnect_delay: float = 2.0) -> None:
+        """
+        :param host: adres IP lub hostname nadawcy
+        :param port: port TCP
+        :param reconnect_delay: czas (sekundy) przed ponowną próbą po błędzie
+        """
+        self.host = host
+        self.port = port
+        self.reconnect_delay = reconnect_delay
+
+        # Klasa odpowiedzialna za niskopoziomową komunikację sieciową
+        self._receiver = NetworkReceiver(host=host, port=port, timeout=3.0)
+
         self._thread: Optional[threading.Thread] = None
-        self._running: bool = False
+        self._running = False
+
+        # Lock do synchronizacji dostępu do klatki między wątkami
         self._lock = threading.Lock()
+
         self._latest_frame: Optional[FrameData] = None
+        self._last_error: Optional[str] = None
 
     def start(self) -> None:
+        """Uruchamia wątek odbierający dane."""
         if self._running:
             return
+
         self._running = True
+
         self._thread = threading.Thread(
-            target=self._receive_loop, daemon=True, name="NetworkFrameProvider"
+            target=self._receive_loop,
+            daemon=True,
+            name="NetworkFrameProvider",
         )
         self._thread.start()
 
     def stop(self) -> None:
+        """Zatrzymuje odbieranie danych i zamyka wątek."""
         self._running = False
-        if self._receiver.socket is not None:
-            try:
-                self._receiver.socket.close()
-            except OSError:
-                pass
+        self._receiver.stop()
+
         if self._thread is not None:
             self._thread.join(timeout=3)
             self._thread = None
 
     def get_latest_frame(self) -> FrameData:
+        """
+        Zwraca najnowszą dostępną klatkę.
+
+        :raises RuntimeError: gdy brak danych lub wystąpił błąd
+        """
         with self._lock:
             if self._latest_frame is None:
-                raise RuntimeError("Brak klatek – oczekiwanie na połączenie")
+                if self._last_error:
+                    raise RuntimeError(self._last_error)
+                raise RuntimeError("Waiting for first frame")
             return self._latest_frame
 
     def _receive_loop(self) -> None:
-        try:
-            self._receiver.connect()
-        except Exception as exc:
-            print(f"[NetworkFrameProvider] Nie udało się połączyć: {exc}")
-            return
+        """
+        Główna pętla wątku odbierającego.
 
+        - próbuje się połączyć
+        - odbiera klatki
+        - zapisuje najnowszą
+        - w razie błędu ponawia połączenie
+        """
         while self._running:
             try:
-                frame = self._receiver.receive_frame()
-                with self._lock:
-                    self._latest_frame = frame
-            except (ConnectionError, OSError):
-                if self._running:
-                    print("[NetworkFrameProvider] Utracono połączenie, ponawiam…")
-                    try:
-                        self._receiver.connect()
-                    except Exception:
-                        break
+                self._last_error = f"Connecting to {self.host}:{self.port}..."
+                self._receiver.connect()
+                self._last_error = None
+
+                while self._running:
+                    frame = self._receiver.receive_frame()
+
+                    # zapis najnowszej klatki (thread-safe)
+                    with self._lock:
+                        self._latest_frame = frame
+                        self._last_error = None
+
             except Exception as exc:
-                if self._running:
-                    print(f"[NetworkFrameProvider] Błąd: {exc}")
-            time.sleep(0.01)
+                if not self._running:
+                    break
+
+                self._receiver.stop()
+                self._last_error = str(exc)
+
+                # odczekaj przed reconnectem
+                time.sleep(self.reconnect_delay)
 
 
-# ═══════════════════════════════════════════════
-# 2. FrameWorker
-# ═══════════════════════════════════════════════
 class FrameWorker(QObject):
-    frame_ready = Signal(QImage)
-    fps_updated = Signal(float)
+    """
+    Worker Qt odpowiedzialny za:
+    - pobieranie klatek z FrameProvider
+    - konwersję do QImage
+    - emitowanie sygnałów do GUI
+    - obliczanie FPS
+    """
 
-    DEFAULT_INTERVAL_MS = 33
+    frame_ready = Signal(QImage)   # nowa klatka do wyświetlenia
+    fps_updated = Signal(float)    # aktualizacja FPS
+
+    DEFAULT_INTERVAL_MS = 15  # ~66 FPS
 
     def __init__(self, provider: FrameProvider, interval_ms: int = DEFAULT_INTERVAL_MS) -> None:
         super().__init__()
         self._provider = provider
         self._interval_ms = interval_ms
+
         self._running = False
         self._timer: Optional[QTimer] = None
+
+        # zmienne do FPS
         self._fps_frame_count = 0
         self._fps_last_time = time.time()
 
+        # ostatni timestamp klatki (aby nie renderować duplikatów)
+        self._last_timestamp: Optional[float] = None
+
     @Slot()
     def start_loop(self) -> None:
-        self._running = True
+        """Uruchamia pętlę aktualizacji w wątku Qt."""
         self._provider.start()
+        self._running = True
+
         self._timer = QTimer()
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._tick)
@@ -147,69 +168,112 @@ class FrameWorker(QObject):
 
     @Slot()
     def stop_loop(self) -> None:
+        """Zatrzymuje worker."""
         self._running = False
+
         if self._timer is not None:
             self._timer.stop()
+            self._timer.deleteLater()
+            self._timer = None
+
         self._provider.stop()
 
     def _tick(self) -> None:
+        """
+        Wywoływane cyklicznie przez QTimer.
+
+        - pobiera klatkę
+        - sprawdza czy nowa
+        - konwertuje do QImage
+        - emituje sygnał
+        """
         if not self._running:
             return
+
         try:
             frame_data = self._provider.get_latest_frame()
         except RuntimeError:
             return
 
-        qimg = self._frame_data_to_qimage(frame_data)
-        if qimg.isNull():
+        # pomijamy tę samą klatkę
+        if self._last_timestamp == frame_data.timestamp:
             return
 
-        self.frame_ready.emit(qimg)
+        self._last_timestamp = frame_data.timestamp
 
+        image = self._frame_data_to_qimage(frame_data)
+        if image.isNull():
+            return
+
+        self.frame_ready.emit(image)
         self._fps_frame_count += 1
+
+        # liczenie FPS co 1 sekundę
         now = time.time()
         elapsed = now - self._fps_last_time
         if elapsed >= 1.0:
-            fps = self._fps_frame_count / elapsed
-            self.fps_updated.emit(fps)
+            self.fps_updated.emit(self._fps_frame_count / elapsed)
             self._fps_frame_count = 0
             self._fps_last_time = now
 
     @staticmethod
-    def _frame_data_to_qimage(fd: FrameData) -> QImage:
-        img = QImage()
-        if img.loadFromData(fd.pixels):
-            return img
+    def _frame_data_to_qimage(frame: FrameData) -> QImage:
+        """
+        Konwertuje FrameData (bytes) na QImage.
+        """
+        image = QImage()
+        if image.loadFromData(frame.pixels):
+            return image
         return QImage()
 
 
-# ═══════════════════════════════════════════════
-# 3. VideoWidget + MainWindow
-# ═══════════════════════════════════════════════
 class VideoWidget(QWidget):
+    """
+    Widget odpowiedzialny za wyświetlanie obrazu wideo.
+    """
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._pixmap: Optional[QPixmap] = None
+
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # tło gdy brak obrazu
         self.setStyleSheet("background-color: #1e1e2e;")
 
     @Slot(QImage)
     def update_frame(self, image: QImage) -> None:
+        """Aktualizuje aktualną klatkę."""
         self._pixmap = QPixmap.fromImage(image)
         self.update()
 
+    def clear_frame(self) -> None:
+        """Czyści obraz."""
+        self._pixmap = None
+        self.update()
+
     def paintEvent(self, event) -> None:
+        """
+        Renderowanie widgetu.
+
+        - jeśli jest obraz → skaluj i wyśrodkuj
+        - jeśli nie → pokaż komunikat
+        """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        if self._pixmap and not self._pixmap.isNull():
+
+        if self._pixmap is not None and not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
+
+            # centrowanie obrazu
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2
+
             painter.drawPixmap(x, y, scaled)
         else:
             painter.setPen(QColor(120, 120, 140))
@@ -217,173 +281,185 @@ class VideoWidget(QWidget):
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
-                "Brak strumienia wideo\nPodaj IP i kliknij Połącz",
+                "Brak strumienia wideo\nPodaj adres nadawcy i kliknij Polacz",
             )
+
         painter.end()
 
 
 class MainWindow(QMainWindow):
-    DEFAULT_PORT = 9000
+    """
+    Główne okno aplikacji.
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    Odpowiada za:
+    - UI
+    - zarządzanie połączeniem
+    - start/stop workerów
+    """
+
+    def __init__(
+        self,
+        initial_host: str = "",
+        initial_port: int = 9000,
+        auto_connect: bool = False,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Zdalny Podgląd Ekranu")
-        self.resize(960, 640)
+
+        self.setWindowTitle("Odbiornik podgladu ekranu")
+        self.resize(1100, 720)
+
+        self._default_port = initial_port
+        self._auto_connect = auto_connect
         self._connected = False
+
         self._frame_provider: Optional[FrameProvider] = None
         self._worker: Optional[FrameWorker] = None
         self._worker_thread: Optional[QThread] = None
-        self._build_ui()
+
+        self._build_ui(initial_host, initial_port)
         self._apply_styles()
 
-    def _build_ui(self) -> None:
+    # ---------------- UI ----------------
+
+    def _build_ui(self, initial_host: str, initial_port: int) -> None:
+        """Buduje interfejs użytkownika."""
+        # toolbar
         toolbar_frame = QFrame()
         toolbar_frame.setObjectName("toolbar")
+
         toolbar_layout = QHBoxLayout(toolbar_frame)
-        toolbar_layout.setContentsMargins(12, 8, 12, 8)
 
-        lbl_ip = QLabel("Adres IP serwera:")
-        lbl_ip.setStyleSheet("color: #cdd6f4; font-weight: bold;")
-        self._ip_input = QLineEdit()
-        self._ip_input.setPlaceholderText("np. 192.168.1.100")
-        self._ip_input.setFixedWidth(260)
-        self._ip_input.returnPressed.connect(self._toggle_connection)
-        self._ip_input.setStyleSheet(
-            "QLineEdit { background: #313244; color: #cdd6f4; border: 1px solid #585b70;"
-            " border-radius: 4px; padding: 4px 8px; }"
-            "QLineEdit:focus { border-color: #89b4fa; }"
-        )
+        host_label = QLabel("Adres nadawcy:")
 
-        self._btn_connect = QPushButton("Połącz")
-        self._btn_connect.setFixedWidth(130)
-        self._btn_connect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._address_input = QLineEdit()
+        self._address_input.setPlaceholderText("np. 192.168.1.100:9000")
+
+        self._btn_connect = QPushButton("Polacz")
         self._btn_connect.clicked.connect(self._toggle_connection)
 
-        toolbar_layout.addWidget(lbl_ip)
-        toolbar_layout.addWidget(self._ip_input)
-        toolbar_layout.addSpacing(8)
+        toolbar_layout.addWidget(host_label)
+        toolbar_layout.addWidget(self._address_input)
         toolbar_layout.addWidget(self._btn_connect)
         toolbar_layout.addStretch()
 
+        # video
         self._video_widget = VideoWidget()
 
         central = QWidget()
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(toolbar_frame)
-        main_layout.addWidget(self._video_widget, stretch=1)
+        layout = QVBoxLayout(central)
+        layout.addWidget(toolbar_frame)
+        layout.addWidget(self._video_widget)
+
         self.setCentralWidget(central)
 
+        # status bar
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
-        self._status_label = QLabel("Stan: Rozłączono")
-        self._fps_label = QLabel("FPS: –")
+
+        self._status_label = QLabel("Stan: Rozlaczono")
+        self._fps_label = QLabel("FPS: -")
+
         self._status_bar.addWidget(self._status_label, stretch=1)
         self._status_bar.addPermanentWidget(self._fps_label)
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            QMainWindow { background-color: #1e1e2e; }
-            #toolbar { background-color: #181825; border-bottom: 1px solid #313244; }
-            QStatusBar { background-color: #181825; color: #a6adc8; font-size: 12px; border-top: 1px solid #313244; }
-            QLabel { color: #cdd6f4; }
-            QPushButton {
-                background-color: #89b4fa; color: #1e1e2e; font-weight: bold;
-                border: none; border-radius: 4px; padding: 6px 16px;
-            }
-            QPushButton:hover { background-color: #74c7ec; }
-            QPushButton:pressed { background-color: #89dceb; }
-            """
-        )
+        """Ustawia style CSS dla aplikacji."""
+        self.setStyleSheet("QMainWindow { background-color: #1e1e2e; }")
+
+    # ---------------- LOGIKA ----------------
 
     @Slot()
     def _toggle_connection(self) -> None:
-        if not self._connected:
-            self._start_stream()
-        else:
+        """Przełącza stan połączenia."""
+        if self._connected:
             self._stop_stream()
+        else:
+            self._start_stream()
 
     def _start_stream(self) -> None:
-        ip_text = self._ip_input.text().strip()
-        if not ip_text:
-            self._status_label.setText("Stan: Podaj adres IP")
+        """Rozpoczyna odbiór strumienia."""
+        address = self._address_input.text().strip()
+        if not address:
+            self._status_label.setText("Stan: Podaj adres")
             return
 
-        host = ip_text
-        port = self.DEFAULT_PORT
-        if ":" in ip_text:
-            host, port_str = ip_text.rsplit(":", 1)
-            try:
-                port = int(port_str)
-            except ValueError:
-                pass
+        host, port = self._parse_address(address)
+        if host is None:
+            self._status_label.setText("Stan: Bledny adres")
+            return
 
+        # inicjalizacja provider + worker
         self._frame_provider = NetworkFrameProvider(host=host, port=port)
-
-        self._connected = True
-        self._btn_connect.setText("Rozłącz")
-        self._btn_connect.setStyleSheet(
-            "QPushButton { background-color: #f38ba8; color: #1e1e2e; font-weight: bold;"
-            " border: none; border-radius: 4px; padding: 6px 16px; }"
-            "QPushButton:hover { background-color: #eba0ac; }"
-        )
-        self._ip_input.setEnabled(False)
-        self._status_label.setText(f"Stan: Łączenie… ({host}:{port})")
 
         self._worker_thread = QThread()
         self._worker = FrameWorker(self._frame_provider)
         self._worker.moveToThread(self._worker_thread)
 
+        # sygnały
         self._worker_thread.started.connect(self._worker.start_loop)
-        self._worker.frame_ready.connect(self._video_widget.update_frame, Qt.ConnectionType.QueuedConnection)
-        self._worker.frame_ready.connect(self._on_first_frame, Qt.ConnectionType.QueuedConnection)
-        self._worker.fps_updated.connect(self._on_fps_updated, Qt.ConnectionType.QueuedConnection)
+        self._worker.frame_ready.connect(self._video_widget.update_frame)
+        self._worker.fps_updated.connect(self._on_fps_updated)
 
         self._worker_thread.start()
 
+        self._connected = True
+
     def _stop_stream(self) -> None:
-        if self._worker is not None:
+        """Zatrzymuje odbiór."""
+        if self._worker:
             self._worker.stop_loop()
-        if self._worker_thread is not None:
+
+        if self._worker_thread:
             self._worker_thread.quit()
-            self._worker_thread.wait(3000)
-            self._worker_thread = None
-        self._worker = None
-        self._frame_provider = None
+            self._worker_thread.wait()
 
         self._connected = False
-        self._btn_connect.setText("Połącz")
-        self._btn_connect.setStyleSheet("")
-        self._ip_input.setEnabled(True)
-        self._status_label.setText("Stan: Rozłączono")
-        self._fps_label.setText("FPS: –")
+        self._video_widget.clear_frame()
+
+    def _parse_address(self, address: str) -> tuple[Optional[str], int]:
+        """Parsuje adres w formacie host:port."""
+        host = address
+        port = self._default_port
+
+        if ":" in address:
+            host, raw_port = address.rsplit(":", 1)
+            try:
+                port = int(raw_port)
+            except ValueError:
+                return None, port
+
+        return host, port
 
     @Slot(float)
     def _on_fps_updated(self, fps: float) -> None:
+        """Aktualizuje etykietę FPS."""
         self._fps_label.setText(f"FPS: {fps:.1f}")
 
-    def closeEvent(self, event) -> None:
-        self._stop_stream()
-        super().closeEvent(event)
 
-    @Slot(QImage)
-    def _on_first_frame(self, _image: QImage) -> None:
-        """Zmienia status na „Połączono” po pierwszej klatce."""
-        ip = self._ip_input.text().strip()
-        self._status_label.setText(f"Stan: Połączono ({ip})")
-        if self._worker is not None:
-            try:
-                self._worker.frame_ready.disconnect(self._on_first_frame)
-            except RuntimeError:
-                pass
+def run_receiver_ui(
+    initial_host: str = "",
+    initial_port: int = 9000,
+    auto_connect: bool = False,
+) -> int:
+    """
+    Uruchamia aplikację Qt.
+    """
+    app = QApplication(sys.argv)
+
+    window = MainWindow(
+        initial_host=initial_host,
+        initial_port=initial_port,
+        auto_connect=auto_connect,
+    )
+
+    window.show()
+    return app.exec()
 
 
 def main() -> None:
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    """Punkt wejścia programu."""
+    raise SystemExit(run_receiver_ui())
 
 
 if __name__ == "__main__":
