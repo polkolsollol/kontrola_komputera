@@ -1,17 +1,23 @@
+from __future__ import annotations
+
 import struct
 
-# NAGŁÓWEK (Header):
-# [4 bajty - rozmiar danych (I)] + [1 bajt - typ wiadomości (B)]
-# Łącznie: 5 bajtów
-HEADER_FORMAT = "!IB" 
+
+HEADER_FORMAT = "!IB"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
-# TYPY WIADOMOŚCI
-MSG_TYPE_FRAME = 1    # Klatka obrazu
-MSG_TYPE_COMMAND = 2  # Np. ruch myszką (przyszłościowo)
+MSG_TYPE_FRAME = 1
+MSG_TYPE_COMMAND = 2
 
-def pack_message(msg_type, data):
-    """Pakuje dane w format: [Rozmiar][Typ][Dane]"""
-    data_size = len(data)
-    header = struct.pack(HEADER_FORMAT, data_size, msg_type)
+
+def pack_message(msg_type: int, data: bytes) -> bytes:
+    """Pack message as [size:4][type:1][payload]."""
+
+    header = struct.pack(HEADER_FORMAT, len(data), msg_type)
     return header + data
+
+
+def unpack_header(header: bytes) -> tuple[int, int]:
+    """Return payload size and message type."""
+
+    return struct.unpack(HEADER_FORMAT, header)
