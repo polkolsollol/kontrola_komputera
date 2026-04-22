@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
 from typing import Optional
 
+from dotenv import load_dotenv
 from PySide6.QtCore import QObject, QPoint, QRect, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -22,11 +24,19 @@ from PySide6.QtWidgets import (
 )
 
 from core.interfaces import FrameData, FrameProvider
+from core.protocol import MSG_TYPE_FRAME, MSG_TYPE_COMMAND, CMD_LOCK, CMD_UNLOCK, pack_command
 from network.connection import NetworkReceiver
+from lock import LockManager
 
+
+# ---------------------------------------------------------------------------
+# Warstwa sieciowa – odbieranie klatek w wątku tła
+# ---------------------------------------------------------------------------
 
 class NetworkFrameProvider(FrameProvider):
     """Receive frames in the background and expose the newest one."""
+
+    command_received = None
 
     def __init__(self, host: str, port: int = 9000, reconnect_delay: float = 2.0) -> None:
         self.host = host
@@ -78,13 +88,17 @@ class NetworkFrameProvider(FrameProvider):
                     with self._lock:
                         self._latest_frame = frame
                         self._last_error = None
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 if not self._running:
                     break
                 self._receiver.stop()
                 self._last_error = str(exc)
                 time.sleep(self.reconnect_delay)
 
+
+# ---------------------------------------------------------------------------
+# Worker Qt – konwersja klatek i licznik FPS
+# ---------------------------------------------------------------------------
 
 class FrameWorker(QObject):
     frame_ready = Signal(QImage)
@@ -155,6 +169,10 @@ class FrameWorker(QObject):
         return QImage()
 
 
+# ---------------------------------------------------------------------------
+# Widget wyświetlający wideo
+# ---------------------------------------------------------------------------
+
 class VideoWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -172,7 +190,7 @@ class VideoWidget(QWidget):
         self._pixmap = None
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802
+    def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
@@ -191,11 +209,132 @@ class VideoWidget(QWidget):
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter,
-                "Brak strumienia wideo\nPodaj adres nadawcy i kliknij Polacz",
+                "Brak strumienia wideo\nPodaj adres nadawcy i kliknij Połącz",
             )
 
         painter.end()
 
+
+# ---------------------------------------------------------------------------
+# Okno logowania administratora
+# ---------------------------------------------------------------------------
+
+class LoginWindow(QWidget):
+    """
+    Ekran logowania wyświetlany przy starcie aplikacji odbiornika.
+
+    Dane logowania (login i hasło) są wczytywane z pliku .env za pomocą
+    biblioteki python-dotenv. Klucze w pliku to ADMIN_USERNAME i ADMIN_PASSWORD.
+    """
+
+    login_successful = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Logowanie – Panel Administratora")
+        self.setFixedSize(420, 340)
+        self._load_credentials()
+        self._build_ui()
+        self._apply_styles()
+
+    def _load_credentials(self) -> None:
+        load_dotenv()
+        self._admin_user = os.getenv("ADMIN_USERNAME", "admin")
+        self._admin_pass = os.getenv("ADMIN_PASSWORD", "admin")
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(48, 40, 48, 40)
+        layout.setSpacing(14)
+
+        title = QLabel("Panel Administratora")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setObjectName("loginTitle")
+
+        self._user_input = QLineEdit()
+        self._user_input.setPlaceholderText("Login")
+        self._user_input.setFixedHeight(40)
+
+        self._pass_input = QLineEdit()
+        self._pass_input.setPlaceholderText("Hasło")
+        self._pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pass_input.setFixedHeight(40)
+        self._pass_input.returnPressed.connect(self._attempt_login)
+
+        self._error_label = QLabel("")
+        self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._error_label.setObjectName("errorLabel")
+        self._error_label.setFixedHeight(20)
+
+        self._btn_login = QPushButton("Zaloguj się")
+        self._btn_login.setFixedHeight(42)
+        self._btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_login.clicked.connect(self._attempt_login)
+
+        layout.addWidget(title)
+        layout.addSpacing(6)
+        layout.addWidget(self._user_input)
+        layout.addWidget(self._pass_input)
+        layout.addWidget(self._error_label)
+        layout.addWidget(self._btn_login)
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QWidget {
+                background-color: #1e1e2e;
+            }
+            #loginTitle {
+                font-size: 20px;
+                font-weight: bold;
+                color: #89b4fa;
+                margin-bottom: 4px;
+            }
+            QLineEdit {
+                background: #313244;
+                color: #cdd6f4;
+                border: 1px solid #585b70;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #89b4fa;
+            }
+            #errorLabel {
+                color: #f38ba8;
+                font-size: 12px;
+            }
+            QPushButton {
+                background-color: #89b4fa;
+                color: #1e1e2e;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+            }
+            QPushButton:hover  { background-color: #74c7ec; }
+            QPushButton:pressed { background-color: #89dceb; }
+            """
+        )
+
+    @Slot()
+    def _attempt_login(self) -> None:
+        username = self._user_input.text().strip()
+        password = self._pass_input.text()
+
+        if username == self._admin_user and password == self._admin_pass:
+            self.login_successful.emit()
+            self.close()
+        else:
+            self._error_label.setText("Nieprawidłowy login lub hasło. Spróbuj ponownie.")
+            self._pass_input.clear()
+            self._pass_input.setFocus()
+
+
+# ---------------------------------------------------------------------------
+# Główne okno aplikacji
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -206,15 +345,18 @@ class MainWindow(QMainWindow):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Odbiornik podgladu ekranu")
+        self.setWindowTitle("Odbiornik podglądu ekranu")
         self.resize(1100, 720)
 
         self._default_port = initial_port
         self._auto_connect = auto_connect
         self._connected = False
-        self._frame_provider: Optional[FrameProvider] = None
+        self._frame_provider: Optional[NetworkFrameProvider] = None
         self._worker: Optional[FrameWorker] = None
         self._worker_thread: Optional[QThread] = None
+
+        # System blokady
+        self._lock_manager = LockManager()
 
         self._build_ui(initial_host, initial_port)
         self._apply_styles()
@@ -241,14 +383,24 @@ class MainWindow(QMainWindow):
             "QLineEdit:focus { border-color: #89b4fa; }"
         )
 
-        self._btn_connect = QPushButton("Polacz")
+        self._btn_connect = QPushButton("Połącz")
         self._btn_connect.setFixedWidth(130)
         self._btn_connect.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_connect.clicked.connect(self._toggle_connection)
 
+        # --- Przyciski blokady ---
+        self._btn_lock = QPushButton("🔒 Zablokuj")
+        self._btn_lock.setFixedWidth(130)
+        self._btn_lock.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_lock.clicked.connect(self._toggle_lock)
+        self._btn_lock.setObjectName("lockBtn")
+        self._btn_lock.setEnabled(False)  # aktywny dopiero po połączeniu
+
         toolbar_layout.addWidget(host_label)
         toolbar_layout.addWidget(self._address_input)
         toolbar_layout.addWidget(self._btn_connect)
+        toolbar_layout.addSpacing(16)
+        toolbar_layout.addWidget(self._btn_lock)
         toolbar_layout.addStretch()
 
         self._video_widget = VideoWidget()
@@ -263,7 +415,7 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
-        self._status_label = QLabel("Stan: Rozlaczono")
+        self._status_label = QLabel("Stan: Rozłączono")
         self._fps_label = QLabel("FPS: -")
         self._status_bar.addWidget(self._status_label, stretch=1)
         self._status_bar.addPermanentWidget(self._fps_label)
@@ -290,14 +442,27 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background-color: #74c7ec; }
             QPushButton:pressed { background-color: #89dceb; }
+            QPushButton:disabled {
+                background-color: #45475a;
+                color: #6c7086;
+            }
+            #lockBtn {
+                background-color: #f38ba8;
+                color: #1e1e2e;
+            }
+            #lockBtn:hover { background-color: #eba0ac; }
             """
         )
 
-    def showEvent(self, event) -> None:  # noqa: N802
+    def showEvent(self, event) -> None:
         super().showEvent(event)
         if self._auto_connect:
             self._auto_connect = False
             self._start_stream()
+
+    # ------------------------------------------------------------------
+    # Połączenie
+    # ------------------------------------------------------------------
 
     @Slot()
     def _toggle_connection(self) -> None:
@@ -330,15 +495,21 @@ class MainWindow(QMainWindow):
 
         self._connected = True
         self._address_input.setEnabled(False)
-        self._btn_connect.setText("Rozlacz")
+        self._btn_connect.setText("Rozłącz")
         self._btn_connect.setStyleSheet(
             "QPushButton { background-color: #f38ba8; color: #1e1e2e; font-weight: bold;"
             " border: none; border-radius: 4px; padding: 6px 16px; }"
             "QPushButton:hover { background-color: #eba0ac; }"
         )
-        self._status_label.setText(f"Stan: Laczenie z {host}:{port}...")
+        self._btn_lock.setEnabled(True)
+        self._status_label.setText(f"Stan: Łączenie z {host}:{port}...")
 
     def _stop_stream(self) -> None:
+        # Odblokuj przy rozłączaniu
+        if self._lock_manager.is_locked():
+            self._lock_manager.unlock()
+            self._update_lock_button()
+
         if self._worker is not None:
             self._worker.stop_loop()
         if self._worker_thread is not None:
@@ -350,9 +521,10 @@ class MainWindow(QMainWindow):
         self._frame_provider = None
         self._connected = False
         self._address_input.setEnabled(True)
-        self._btn_connect.setText("Polacz")
+        self._btn_connect.setText("Połącz")
         self._btn_connect.setStyleSheet("")
-        self._status_label.setText("Stan: Rozlaczono")
+        self._btn_lock.setEnabled(False)
+        self._status_label.setText("Stan: Rozłączono")
         self._fps_label.setText("FPS: -")
         self._video_widget.clear_frame()
 
@@ -371,9 +543,40 @@ class MainWindow(QMainWindow):
 
         return host, port
 
+    # ------------------------------------------------------------------
+    # Blokada ekranu
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def _toggle_lock(self) -> None:
+        if self._lock_manager.is_locked():
+            self._lock_manager.unlock()
+        else:
+            self._lock_manager.lock()
+        self._update_lock_button()
+
+    def _update_lock_button(self) -> None:
+        if self._lock_manager.is_locked():
+            self._btn_lock.setText("🔓 Odblokuj")
+            self._btn_lock.setStyleSheet(
+                "QPushButton { background-color: #a6e3a1; color: #1e1e2e; font-weight: bold;"
+                " border: none; border-radius: 4px; padding: 6px 16px; }"
+                "QPushButton:hover { background-color: #94e2d5; }"
+            )
+            self._status_label.setText("Stan: Ekran zdalny ZABLOKOWANY")
+        else:
+            self._btn_lock.setText("🔒 Zablokuj")
+            self._btn_lock.setStyleSheet("")
+            if self._connected:
+                self._status_label.setText(f"Stan: Połączono ({self._address_input.text().strip()})")
+
+    # ------------------------------------------------------------------
+    # Callbacki
+    # ------------------------------------------------------------------
+
     @Slot(QImage)
     def _on_first_frame(self, _image: QImage) -> None:
-        self._status_label.setText(f"Stan: Polaczono ({self._address_input.text().strip()})")
+        self._status_label.setText(f"Stan: Połączono ({self._address_input.text().strip()})")
         if self._worker is not None:
             try:
                 self._worker.frame_ready.disconnect(self._on_first_frame)
@@ -384,11 +587,17 @@ class MainWindow(QMainWindow):
     def _on_fps_updated(self, fps: float) -> None:
         self._fps_label.setText(f"FPS: {fps:.1f}")
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def closeEvent(self, event) -> None:
+        if self._lock_manager.is_locked():
+            self._lock_manager.unlock()
         if self._connected:
             self._stop_stream()
         super().closeEvent(event)
 
+
+# ---------------------------------------------------------------------------
+# Punkt wejścia
+# ---------------------------------------------------------------------------
 
 def run_receiver_ui(
     initial_host: str = "",
@@ -396,12 +605,17 @@ def run_receiver_ui(
     auto_connect: bool = False,
 ) -> int:
     app = QApplication(sys.argv)
-    window = MainWindow(
+
+    main_window = MainWindow(
         initial_host=initial_host,
         initial_port=initial_port,
         auto_connect=auto_connect,
     )
-    window.show()
+
+    login_window = LoginWindow()
+    login_window.login_successful.connect(main_window.show)
+    login_window.show()
+
     return app.exec()
 
 
