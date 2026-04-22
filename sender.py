@@ -33,6 +33,7 @@ def run_sender(host: str, port: int, monitor: int, fps: int, quality: int) -> in
     try:
         from grabber.screen_grabber import ScreenGrabber
         from network.connection import NetworkServer
+        from screen_lock import ScreenLockController
     except ModuleNotFoundError as exc:
         print(
             "[sender] Brakuje zaleznosci Pythona. "
@@ -43,7 +44,19 @@ def run_sender(host: str, port: int, monitor: int, fps: int, quality: int) -> in
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    server = NetworkServer(host=host, port=port)
+    lock_controller = ScreenLockController()
+
+    def handle_remote_command(command: str) -> None:
+        if command == "lock":
+            print("[sender] Otrzymano polecenie blokady ekranu.")
+            lock_controller.lock()
+        elif command == "unlock":
+            print("[sender] Otrzymano polecenie odblokowania ekranu.")
+            lock_controller.unlock()
+        else:
+            print(f"[sender] Nieznana komenda z receivera: {command}")
+
+    server = NetworkServer(host=host, port=port, command_handler=handle_remote_command)
     grabber = ScreenGrabber(monitor_index=monitor, jpeg_quality=quality, target_fps=fps)
 
     try:
@@ -77,6 +90,7 @@ def run_sender(host: str, port: int, monitor: int, fps: int, quality: int) -> in
     except KeyboardInterrupt:
         print("\n[sender] Zatrzymywanie nadajnika...")
     finally:
+        lock_controller.stop()
         grabber.stop()
         server.stop()
 

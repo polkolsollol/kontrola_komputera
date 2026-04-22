@@ -7,7 +7,7 @@ Projekt dziala w modelu:
 - `sender.py` - uruchamiany na komputerze, z ktorego ma byc wysylany ekran,
 - `receiver.py` - uruchamiany na komputerze, ktory ma ten ekran odebrac i pokazac w oknie.
 
-Po stronie nadawcy obraz ekranu jest przechwytywany, kompresowany do JPEG i wysylany przez TCP. Po stronie odbiorcy klatki sa odbierane i wyswietlane w interfejsie PySide6.
+Po stronie nadawcy obraz ekranu jest przechwytywany, kompresowany do JPEG i wysylany przez TCP. Po stronie odbiorcy klatki sa odbierane i wyswietlane w interfejsie PySide6. Dodatkowo administrator po stronie receivera moze wyslac komendy `lock` i `unlock`, ktore wlaczaja albo wylaczaja blokade ekranu klienta.
 
 ## Architektura
 
@@ -22,6 +22,9 @@ TCP + prosty naglowek [payload_size][message_type]
 
 Komputer odbiorcy
 NetworkReceiver -> NetworkFrameProvider -> FrameWorker -> UI
+
+Komendy administratora
+UI -> MSG_TYPE_COMMAND(lock/unlock) -> sender -> blokada/odblokowanie ekranu klienta
 ```
 
 Najwazniejsze pliki:
@@ -46,6 +49,7 @@ Zaleznosci projektu sa w [requirements.txt](/C:/Users/Damian%20G/Documents/GitHu
 - `mss`
 - `numpy`
 - `opencv-python`
+- `python-dotenv`
 
 ## Instalacja
 
@@ -87,6 +91,12 @@ python sender.py --host 0.0.0.0 --port 9000 --monitor 1 --fps 20 --quality 80
 ```
 
 Po uruchomieniu sender wypisze komunikat, ze czeka na polaczenie odbiornika.
+
+Sender domyslnie probuje tez dodac sie do autostartu Windows. Jesli chcesz to pominac:
+
+```powershell
+python sender.py --no-autostart
+```
 
 ### 2. Komputer odbiorcy
 
@@ -131,7 +141,7 @@ python receiver.py --host 192.168.1.100 --port 9000 --connect
 Interfejs jest prosty i ma jeden glowny ekran:
 
 - u gory znajduje sie pole `Adres nadawcy`,
-- obok jest przycisk `Polacz` albo `Rozlacz`,
+- obok znajduja sie przyciski `Polacz` / `Rozlacz`, `Zablokuj ekran` i `Odblokuj ekran`,
 - srodek okna pokazuje aktualny obraz z komputera nadawcy,
 - na dole pasek statusu pokazuje stan polaczenia i FPS.
 
@@ -140,9 +150,34 @@ Znaczenie elementow:
 - `Adres nadawcy` - IP komputera, na ktorym dziala `sender.py`
 - `Polacz` - nawiazuje polaczenie i zaczyna odbior klatek
 - `Rozlacz` - zatrzymuje odbior i rozlacza sesje
+- `Zablokuj ekran` - wysyla do klienta polecenie wlaczenia blokady ekranu
+- `Odblokuj ekran` - wysyla do klienta polecenie zdjecia blokady
 - `Stan: Laczenie...` - aplikacja probuje polaczyc sie z nadajnikiem
 - `Stan: Polaczono (...)` - odebrano pierwsze poprawne klatki
 - `FPS` - liczba nowych klatek na sekunde wyswietlanych w UI
+
+## Logowanie administratora
+
+Receiver ma ekran logowania administratora. Dane sa czytane z pliku `.env` przez `python-dotenv`.
+
+Obslugiwane zmienne:
+
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+
+Jesli plik `.env` nie istnieje, aplikacja uzyje domyslnych danych:
+
+```text
+login: admin
+haslo: admin
+```
+
+Przykladowy `.env`:
+
+```text
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=moje_haslo
+```
 
 ## Parametry skryptow
 
@@ -159,6 +194,7 @@ Dostepne opcje:
 - `--monitor` - indeks monitora dla biblioteki `mss`
 - `--fps` - limit FPS przechwytywania
 - `--quality` - jakosc JPEG od `1` do `100`
+- `--no-autostart` - nie dodawaj sendera do autostartu Windows
 
 ### receiver.py
 
@@ -188,9 +224,58 @@ Ten plik jest tylko wygodnym wrapperem. Docelowo najczytelniej uzywac osobno `se
 1. Na komputerze A uruchom `python sender.py`.
 2. Sprawdz jego lokalny adres IPv4, np. `192.168.1.100`.
 3. Na komputerze B uruchom `python receiver.py`.
-4. W polu `Adres nadawcy` wpisz `192.168.1.100`.
-5. Kliknij `Polacz`.
-6. Po chwili w oknie odbiornika powinien pojawic sie obraz z komputera A.
+4. Zaloguj sie jako administrator.
+5. W polu `Adres nadawcy` wpisz `192.168.1.100`.
+6. Kliknij `Polacz`.
+7. Po chwili w oknie odbiornika powinien pojawic sie obraz z komputera A.
+8. Jesli chcesz zablokowac ekran klienta, kliknij `Zablokuj ekran`.
+9. Aby przywrocic normalny widok, kliknij `Odblokuj ekran`.
+
+## Blokada ekranu klienta
+
+Blokada dodana w projekcie jest blokada aplikacyjna, a nie natywnym ekranem logowania Windows.
+
+To znaczy:
+
+- sender tworzy topmost overlay na monitorach klienta,
+- overlay mozna wlaczyc i wylaczyc z poziomu receivera,
+- funkcja jest odwracalna przez administratora,
+- nie zastępuje bezpiecznego `LockWorkStation()` i nie probuje obchodzic zabezpieczen systemu.
+
+To podejscie jest praktyczne dla projektu szkolnego i sterowania administracyjnego, bo pozwala rowniez na zdalne odblokowanie.
+
+## Autostart sendera w rejestrze
+
+`sender.py` moze zapisac sie w autostarcie Windows przez [autostart_manager.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/autostart_manager.py).
+
+Klucz rejestru:
+
+```text
+HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run
+```
+
+Nazwa wartosci:
+
+```text
+SenderApp
+```
+
+Typ wartosci:
+
+```text
+REG_SZ
+```
+
+Dane wartosci:
+
+- dla wersji `.exe`: sciezka do pliku wykonywalnego,
+- dla wersji `.py`: komenda w postaci:
+
+```text
+"C:\\sciezka\\do\\python.exe" "C:\\sciezka\\do\\sender.py"
+```
+
+Jesli uruchamiasz sender z normalnego skryptu Pythona, to do rejestru nie trafia sama nazwa `sender.py`, tylko cala komenda potrzebna do jego odpalenia.
 
 ## Rozwiazywanie problemow
 
@@ -253,6 +338,7 @@ Aktualna wersja spina wszystkie glowne obszary:
 - kompresje JPEG,
 - przesyl przez TCP,
 - odbior i wyswietlanie w UI,
+- zdalne komendy `lock` / `unlock`,
 - dwa osobne skrypty startowe dla nadajnika i odbiornika.
 
 To jest sensowna pierwsza wersja dzialajaca w LAN. Kolejne rozszerzenia mozna robic juz na spokojnie: autowybor monitorow, lepsze komunikaty o bledach, handshake protokolu, sterowanie zdalne, szyfrowanie albo obsluge wielu odbiornikow.

@@ -21,3 +21,15 @@ def unpack_header(header: bytes) -> tuple[int, int]:
     """Return payload size and message type."""
 
     return struct.unpack(HEADER_FORMAT, header)
+
+
+def encode_command(command: str) -> bytes:
+    """Encode remote command payload."""
+
+    return command.strip().lower().encode("utf-8")
+
+
+def decode_command(data: bytes) -> str:
+    """Decode remote command payload."""
+
+    return data.decode("utf-8").strip().lower()

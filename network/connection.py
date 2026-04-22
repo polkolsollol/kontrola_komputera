@@ -3,10 +3,19 @@ from __future__ import annotations
 import logging
 import socket
 import struct
-from typing import Optional
+import threading
+from typing import Callable, Optional
 
 from core.interfaces import FrameData
-from core.protocol import HEADER_SIZE, MSG_TYPE_FRAME, pack_message, unpack_header
+from core.protocol import (
+    HEADER_SIZE,
+    MSG_TYPE_COMMAND,
+    MSG_TYPE_FRAME,
+    decode_command,
+    encode_command,
+    pack_message,
+    unpack_header,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -57,12 +66,24 @@ def deserialize_frame(data: bytes) -> FrameData:
 class NetworkServer:
     """TCP server used on the sender machine."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 9000, timeout: float = 10.0):
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 9000,
+        timeout: float = 10.0,
+        command_handler: Optional[Callable[[str], None]] = None,
+    ):
         self.host = host
         self.port = port
         self.timeout = timeout
+        self.command_handler = command_handler
         self.server_socket: Optional[socket.socket] = None
         self.client_socket: Optional[socket.socket] = None
+        self._command_thread: Optional[threading.Thread] = None
+        self._command_thread_socket: Optional[socket.socket] = None
+
+    def set_command_handler(self, handler: Callable[[str], None]) -> None:
+        self.command_handler = handler
 
     def start(self) -> None:
         """Start listening for receiver connection."""
@@ -87,6 +108,7 @@ class NetworkServer:
         client_socket, address = self.server_socket.accept()
         client_socket.settimeout(self.timeout)
         self.client_socket = client_socket
+        self._start_command_listener(client_socket)
         LOGGER.info("Receiver connected from %s:%s", address[0], address[1])
         return address
 
@@ -106,10 +128,52 @@ class NetworkServer:
 
     def close_client(self) -> None:
         if self.client_socket is not None:
+            self._command_thread_socket = None
+            try:
+                self.client_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        if self.client_socket is not None:
             try:
                 self.client_socket.close()
             finally:
                 self.client_socket = None
+
+        if self._command_thread is not None:
+            self._command_thread.join(timeout=1.5)
+            self._command_thread = None
+
+    def _start_command_listener(self, client_socket: socket.socket) -> None:
+        self._command_thread_socket = client_socket
+        self._command_thread = threading.Thread(
+            target=self._command_loop,
+            args=(client_socket,),
+            daemon=True,
+            name="NetworkServerCommandListener",
+        )
+        self._command_thread.start()
+
+    def _command_loop(self, client_socket: socket.socket) -> None:
+        while self._command_thread_socket is client_socket:
+            try:
+                header = recv_exact(client_socket, HEADER_SIZE)
+                data_size, msg_type = unpack_header(header)
+                payload = recv_exact(client_socket, data_size)
+            except (ConnectionError, OSError):
+                break
+
+            if msg_type != MSG_TYPE_COMMAND:
+                LOGGER.warning("Ignoring unsupported client message type %s", msg_type)
+                continue
+
+            command = decode_command(payload)
+            LOGGER.info("Received remote command: %s", command)
+            if self.command_handler is not None:
+                try:
+                    self.command_handler(command)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.exception("Command handler failed for %s: %s", command, exc)
 
     def stop(self) -> None:
         self.close_client()
@@ -128,6 +192,7 @@ class NetworkReceiver:
         self.port = port
         self.timeout = timeout
         self.socket: Optional[socket.socket] = None
+        self._send_lock = threading.Lock()
 
     def connect(self) -> None:
         """Connect to sender."""
@@ -153,6 +218,16 @@ class NetworkReceiver:
             raise ValueError(f"Unsupported message type: {msg_type}")
 
         return deserialize_frame(payload)
+
+    def send_command(self, command: str) -> None:
+        """Send remote command to sender."""
+
+        if self.socket is None:
+            raise RuntimeError("Receiver is not connected")
+
+        message = pack_message(MSG_TYPE_COMMAND, encode_command(command))
+        with self._send_lock:
+            self.socket.sendall(message)
 
     def stop(self) -> None:
         if self.socket is not None:

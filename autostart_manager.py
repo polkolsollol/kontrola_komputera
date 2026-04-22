@@ -1,86 +1,87 @@
-import winreg
+﻿import os
 import sys
-import os
+import winreg
 
-def register_autostart():
-    """Rejestruje aplikację w autostarcie Windows."""
+
+REGISTRY_RUN_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+REGISTRY_VALUE_NAME = "SenderApp"
+
+
+def get_autostart_command() -> str:
+    """Return command stored in Windows Run registry entry."""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+
+    script_path = os.path.abspath(sys.argv[0])
+    python_path = sys.executable
+    return f'"{python_path}" "{script_path}"'
+
+
+def register_autostart() -> bool:
+    """Register sender in current user Windows autostart."""
     try:
-        # Pobierz ścieżkę do aktualnego exe
-        if getattr(sys, 'frozen', False):
-            # Jeśli to exe (PyInstaller/cx_Freeze)
-            exe_path = sys.executable
-        else:
-            # Jeśli to skrypt Python
-            exe_path = os.path.abspath(sys.argv[0])
-        
-        # Otwórz klucz rejestru autostartu
+        command = get_autostart_command()
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            REGISTRY_RUN_KEY,
             0,
-            winreg.KEY_SET_VALUE
+            winreg.KEY_SET_VALUE,
         )
-        
-        # Dodaj wpis
-        winreg.SetValueEx(key, "SenderApp", 0, winreg.REG_SZ, exe_path)
+        winreg.SetValueEx(key, REGISTRY_VALUE_NAME, 0, winreg.REG_SZ, command)
         winreg.CloseKey(key)
-        
-        print(f"[INFO] Aplikacja zarejestrowana w autostarcie: {exe_path}")
+        print(f"[INFO] Aplikacja zarejestrowana w autostarcie: {command}")
         return True
-        
-    except Exception as e:
-        print(f"[ERROR] Nie udało się zarejestrować autostartu: {e}")
+    except Exception as exc:
+        print(f"[ERROR] Nie udalo sie zarejestrowac autostartu: {exc}")
         return False
 
-def unregister_autostart():
-    """Usuwa aplikację z autostartu."""
+
+def unregister_autostart() -> bool:
+    """Remove sender from current user Windows autostart."""
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            REGISTRY_RUN_KEY,
             0,
-            winreg.KEY_SET_VALUE
+            winreg.KEY_SET_VALUE,
         )
-        
-        winreg.DeleteValue(key, "SenderApp")
+        winreg.DeleteValue(key, REGISTRY_VALUE_NAME)
         winreg.CloseKey(key)
-        
-        print("[INFO] Aplikacja usunięta z autostartu")
+        print("[INFO] Aplikacja usunieta z autostartu")
         return True
-        
     except FileNotFoundError:
-        print("[INFO] Aplikacja nie była w autostarcie")
+        print("[INFO] Aplikacja nie byla w autostarcie")
         return True
-    except Exception as e:
-        print(f"[ERROR] Nie udało się usunąć z autostartu: {e}")
+    except Exception as exc:
+        print(f"[ERROR] Nie udalo sie usunac z autostartu: {exc}")
         return False
 
-def is_registered():
-    """Sprawdza czy aplikacja jest już w autostarcie."""
+
+def is_registered() -> bool:
+    """Check whether sender is already registered in current user autostart."""
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            REGISTRY_RUN_KEY,
             0,
-            winreg.KEY_READ
+            winreg.KEY_READ,
         )
-        
-        value, _ = winreg.QueryValueEx(key, "SenderApp")
+        winreg.QueryValueEx(key, REGISTRY_VALUE_NAME)
         winreg.CloseKey(key)
         return True
-        
     except FileNotFoundError:
         return False
     except Exception:
         return False
 
-def setup_autostart():
-    """Główna funkcja do konfiguracji autostartu."""
+
+def setup_autostart() -> None:
+    """Ensure sender autostart entry exists."""
     if not is_registered():
         print("[INFO] Konfigurowanie autostartu...")
         if register_autostart():
-            print("[SUCCESS] Autostart skonfigurowany pomyślnie!")
+            print("[SUCCESS] Autostart skonfigurowany pomyslnie!")
         else:
-            print("[ERROR] Nie udało się skonfigurować autostartu")
+            print("[ERROR] Nie udalo sie skonfigurowac autostartu")
     else:
-        print("[INFO] Autostart już skonfigurowany")
+        print("[INFO] Autostart jest juz skonfigurowany")

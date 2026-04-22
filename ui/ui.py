@@ -72,6 +72,9 @@ class NetworkFrameProvider(FrameProvider):
                 raise RuntimeError("Waiting for first frame")
             return self._latest_frame
 
+    def send_command(self, command: str) -> None:
+        self._receiver.send_command(command)
+
     def _receive_loop(self) -> None:
         while self._running:
             try:
@@ -404,9 +407,23 @@ class MainWindow(QMainWindow):
         self._btn_connect.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_connect.clicked.connect(self._toggle_connection)
 
+        self._btn_lock = QPushButton("Zablokuj ekran")
+        self._btn_lock.setFixedWidth(140)
+        self._btn_lock.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_lock.setEnabled(False)
+        self._btn_lock.clicked.connect(self._lock_remote_screen)
+
+        self._btn_unlock = QPushButton("Odblokuj ekran")
+        self._btn_unlock.setFixedWidth(145)
+        self._btn_unlock.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_unlock.setEnabled(False)
+        self._btn_unlock.clicked.connect(self._unlock_remote_screen)
+
         toolbar_layout.addWidget(host_label)
         toolbar_layout.addWidget(self._address_input)
         toolbar_layout.addWidget(self._btn_connect)
+        toolbar_layout.addWidget(self._btn_lock)
+        toolbar_layout.addWidget(self._btn_unlock)
         toolbar_layout.addStretch()
 
         self._video_widget = VideoWidget()
@@ -489,6 +506,8 @@ class MainWindow(QMainWindow):
         self._connected = True
         self._address_input.setEnabled(False)
         self._btn_connect.setText("Rozlacz")
+        self._btn_lock.setEnabled(True)
+        self._btn_unlock.setEnabled(True)
         self._btn_connect.setStyleSheet(
             "QPushButton { background-color: #f38ba8; color: #1e1e2e; font-weight: bold;"
             " border: none; border-radius: 4px; padding: 6px 16px; }"
@@ -509,6 +528,8 @@ class MainWindow(QMainWindow):
         self._connected = False
         self._address_input.setEnabled(True)
         self._btn_connect.setText("Polacz")
+        self._btn_lock.setEnabled(False)
+        self._btn_unlock.setEnabled(False)
         self._btn_connect.setStyleSheet("")
         self._status_label.setText("Stan: Rozlaczono")
         self._fps_label.setText("FPS: -")
@@ -541,6 +562,28 @@ class MainWindow(QMainWindow):
     @Slot(float)
     def _on_fps_updated(self, fps: float) -> None:
         self._fps_label.setText(f"FPS: {fps:.1f}")
+
+    @Slot()
+    def _lock_remote_screen(self) -> None:
+        self._send_remote_command("lock", "Wyslano polecenie blokady ekranu")
+
+    @Slot()
+    def _unlock_remote_screen(self) -> None:
+        self._send_remote_command("unlock", "Wyslano polecenie odblokowania ekranu")
+
+    def _send_remote_command(self, command: str, success_message: str) -> None:
+        provider = self._frame_provider
+        if not isinstance(provider, NetworkFrameProvider):
+            self._status_label.setText("Stan: Brak aktywnego polaczenia z klientem")
+            return
+
+        try:
+            provider.send_command(command)
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(f"Stan: Nie udalo sie wyslac komendy ({exc})")
+            return
+
+        self._status_label.setText(f"Stan: {success_message}")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._connected:
