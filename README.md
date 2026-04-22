@@ -256,3 +256,18 @@ Aktualna wersja spina wszystkie glowne obszary:
 - dwa osobne skrypty startowe dla nadajnika i odbiornika.
 
 To jest sensowna pierwsza wersja dzialajaca w LAN. Kolejne rozszerzenia mozna robic juz na spokojnie: autowybor monitorow, lepsze komunikaty o bledach, handshake protokolu, sterowanie zdalne, szyfrowanie albo obsluge wielu odbiornikow.
+
+
+## Generowanie plików .exe dla sender i receiver
+
+sender:
+
+```powershell
+pyinstaller --onefile --name sender --add-data "autostart_manager.py;." sender.py
+```
+
+reciver:
+
+```powershell
+pyinstaller --onefile --name receiver receiver.py
+```

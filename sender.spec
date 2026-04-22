@@ -5,7 +5,7 @@ a = Analysis(
     ['sender.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('autostart_manager.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
