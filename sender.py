@@ -3,6 +3,15 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+import sys
+import os
+
+# Import autostart manager tylko na Windows
+if sys.platform == "win32":
+    try:
+        from autostart_manager import setup_autostart
+    except ImportError:
+        setup_autostart = None
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--monitor", type=int, default=1, help="Indeks monitora dla mss.")
     parser.add_argument("--fps", type=int, default=15, help="Docelowy limit FPS przechwytywania.")
     parser.add_argument("--quality", type=int, default=75, help="Jakosc JPEG w zakresie 1-100.")
+    parser.add_argument("--no-autostart", action="store_true", help="Nie rejestruj w autostarcie Windows.")
     return parser
 
 
@@ -75,6 +85,14 @@ def run_sender(host: str, port: int, monitor: int, fps: int, quality: int) -> in
 
 def main() -> int:
     args = build_parser().parse_args()
+    
+    # Automatyczna rejestracja w autostarcie Windows (jeśli nie wyłączona)
+    if sys.platform == "win32" and not args.no_autostart and setup_autostart:
+        try:
+            setup_autostart()
+        except Exception as e:
+            print(f"[WARNING] Nie udało się skonfigurować autostartu: {e}")
+    
     return run_sender(
         host=args.host,
         port=args.port,
