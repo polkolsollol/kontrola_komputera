@@ -31,8 +31,10 @@ def main() -> int:
             quality=sender_args.quality,
         )
 
+    from app.receiver.ui import run_receiver_ui
+
     receiver_args = receiver.build_parser().parse_args(remaining)
-    return receiver.run_receiver_ui(
+    return run_receiver_ui(
         initial_host=receiver_args.host,
         initial_port=receiver_args.port,
         auto_connect=bool(receiver_args.connect and receiver_args.host),

@@ -8,7 +8,7 @@ import cv2
 import mss
 import numpy as np
 
-from core.interfaces import FrameData, FrameProvider
+from app.core.interfaces import FrameData, FrameProvider
 
 
 class ScreenGrabber(FrameProvider):

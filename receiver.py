@@ -24,7 +24,7 @@ def main() -> int:
     args = build_parser().parse_args()
 
     try:
-        from ui.ui import run_receiver_ui
+        from app.receiver.ui import run_receiver_ui
     except ModuleNotFoundError as exc:
         print(
             "[receiver] Brakuje zaleznosci Pythona. "

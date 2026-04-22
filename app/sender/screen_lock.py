@@ -54,6 +54,7 @@ class ScreenLockController:
         root = tk.Tk()
         root.withdraw()
         windows: list[tk.Toplevel] = []
+        keepalive_job: list[str] = []
 
         def process_commands() -> None:
             while True:
@@ -68,14 +69,31 @@ class ScreenLockController:
                     self._hide_overlay(windows)
                 elif command == "stop":
                     self._hide_overlay(windows)
+                    if keepalive_job:
+                        try:
+                            root.after_cancel(keepalive_job[0])
+                        except tk.TclError:
+                            pass
                     root.quit()
                     root.destroy()
                     return
 
             root.after(100, process_commands)
 
+        def keep_windows_foreground() -> None:
+            if windows:
+                for window in list(windows):
+                    try:
+                        window.attributes("-topmost", True)
+                        window.lift()
+                        window.focus_force()
+                    except tk.TclError:
+                        pass
+            keepalive_job[:] = [root.after(500, keep_windows_foreground)]
+
         self._ready.set()
         root.after(100, process_commands)
+        keepalive_job[:] = [root.after(500, keep_windows_foreground)]
         root.mainloop()
 
     def _show_overlay(self, root: tk.Tk, windows: list[tk.Toplevel]) -> None:
@@ -93,6 +111,7 @@ class ScreenLockController:
             window.overrideredirect(True)
             window.configure(bg="black")
             window.attributes("-topmost", True)
+            window.configure(cursor="none")
             window.geometry(
                 f"{monitor['width']}x{monitor['height']}+{monitor['left']}+{monitor['top']}"
             )
@@ -123,6 +142,15 @@ class ScreenLockController:
                 font=("Segoe UI", 16),
             )
             subtitle.pack()
+
+            hint = tk.Label(
+                frame,
+                text="Skontaktuj sie z administratorem, aby przywrocic dostep.",
+                fg="#cdd6f4",
+                bg="black",
+                font=("Segoe UI", 12),
+            )
+            hint.pack(pady=(16, 0))
 
             window.focus_force()
             window.lift()

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import time
 import sys
-import os
+import time
 
 # Import autostart manager tylko na Windows
 if sys.platform == "win32":
     try:
-        from autostart_manager import setup_autostart
+        from app.sender.autostart_manager import setup_autostart
     except ImportError:
         setup_autostart = None
 
@@ -31,9 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_sender(host: str, port: int, monitor: int, fps: int, quality: int) -> int:
     try:
-        from grabber.screen_grabber import ScreenGrabber
-        from network.connection import NetworkServer
-        from screen_lock import ScreenLockController
+        from app.network.connection import NetworkServer
+        from app.sender.screen_grabber import ScreenGrabber
+        from app.sender.screen_lock import ScreenLockController
     except ModuleNotFoundError as exc:
         print(
             "[sender] Brakuje zaleznosci Pythona. "

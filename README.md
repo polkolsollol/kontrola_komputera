@@ -32,10 +32,24 @@ Najwazniejsze pliki:
 - [sender.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/sender.py) - skrypt startowy nadajnika
 - [receiver.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/receiver.py) - skrypt startowy odbiornika z UI
 - [main.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/main.py) - opcjonalny launcher wygodny do lokalnych testow
-- [grabber/screen_grabber.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/grabber/screen_grabber.py) - przechwytywanie ekranu
-- [network/connection.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/network/connection.py) - transport TCP i serializacja klatek
-- [ui/ui.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/ui/ui.py) - interfejs odbiornika
-- [core/interfaces.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/core/interfaces.py) - wspolny kontrakt `FrameData` / `FrameProvider`
+- [app/sender/screen_grabber.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/app/sender/screen_grabber.py) - przechwytywanie ekranu
+- [app/network/connection.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/app/network/connection.py) - transport TCP i serializacja klatek
+- [app/receiver/ui.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/app/receiver/ui.py) - interfejs odbiornika
+- [app/core/interfaces.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/app/core/interfaces.py) - wspolny kontrakt `FrameData` / `FrameProvider`
+
+## Struktura projektu
+
+Kod aplikacji jest teraz uporzadkowany w pakiecie `app`:
+
+```text
+app/
+  core/       wspolne modele i protokol
+  network/    transport TCP i komendy
+  sender/     przechwytywanie, blokada ekranu, autostart
+  receiver/   interfejs administratora
+```
+
+Pliki `sender.py`, `receiver.py` i `main.py` zostaly na gorze repo jako proste punkty wejscia.
 
 ## Wymagania
 
@@ -242,11 +256,13 @@ To znaczy:
 - funkcja jest odwracalna przez administratora,
 - nie zastępuje bezpiecznego `LockWorkStation()` i nie probuje obchodzic zabezpieczen systemu.
 
+Celowo nie przechwytuje systemowych skrotow takich jak `Alt+Tab` albo klawisz Windows. Te skroty sa chronione przez system i ich wymuszona blokada nie jest czyms, co chcialem dalej wzmacniac w tym projekcie.
+
 To podejscie jest praktyczne dla projektu szkolnego i sterowania administracyjnego, bo pozwala rowniez na zdalne odblokowanie.
 
 ## Autostart sendera w rejestrze
 
-`sender.py` moze zapisac sie w autostarcie Windows przez [autostart_manager.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/autostart_manager.py).
+`sender.py` moze zapisac sie w autostarcie Windows przez [autostart_manager.py](/C:/Users/Damian%20G/Documents/GitHub/kontrola_komputera/app/sender/autostart_manager.py).
 
 Klucz rejestru:
 

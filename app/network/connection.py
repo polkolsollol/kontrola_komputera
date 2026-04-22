@@ -6,8 +6,8 @@ import struct
 import threading
 from typing import Callable, Optional
 
-from core.interfaces import FrameData
-from core.protocol import (
+from app.core.interfaces import FrameData
+from app.core.protocol import (
     HEADER_SIZE,
     MSG_TYPE_COMMAND,
     MSG_TYPE_FRAME,

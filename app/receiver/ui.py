@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.interfaces import FrameData, FrameProvider
-from network.connection import NetworkReceiver
+from app.core.interfaces import FrameData, FrameProvider
+from app.network.connection import NetworkReceiver
 
 
 # ---------------------------------------------------------------------------

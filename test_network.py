@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
-from core.interfaces import FrameData
-from network.connection import NetworkReceiver, NetworkServer
+from app.core.interfaces import FrameData
+from app.network.connection import NetworkReceiver, NetworkServer
 
 
 RECEIVED_COMMANDS: list[str] = []
@@ -26,6 +26,7 @@ def run_server() -> None:
             timestamp=time.time(),
         )
         server.send_frame(frame)
+        time.sleep(0.5)
     finally:
         server.stop()
 

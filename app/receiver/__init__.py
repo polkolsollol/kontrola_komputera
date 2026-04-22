@@ -1,0 +1,1 @@
+"""Receiver-side user interface."""
